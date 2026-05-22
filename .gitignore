@@ -1,0 +1,21 @@
+# Credentials - never commit these
+.env
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Data files - too large for git
+data/
+*.nc
+*.zarr
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
