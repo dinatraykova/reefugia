@@ -45,6 +45,18 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Jupyter notebooks
+
+To use the notebooks with the correct environment:
+
+```bash
+pip install ipykernel
+python -m ipykernel install --user --name=reefwatch --display-name="reefwatch"
+jupyter notebook
+```
+
+Then select the **reefwatch** kernel in the top right of the notebook.
+
 ## Credentials
 reefwatch requires a free Copernicus Marine Service account.
 Register at https://marine.copernicus.eu, then run:
