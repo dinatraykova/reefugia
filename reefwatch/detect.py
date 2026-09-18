@@ -43,8 +43,8 @@ def load_or_compute_climatology(region_name:str) -> xr.Dataset:
         zarr.consolidate_metadata(path)
         return climatology
     
-def detect_mhw(sst: xr.DataArray, region_name: str) -> dict:
-    """Detect marine heatwave exceedance for each grid point and time step.
+def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
+    """Compute marine heatwave exceedance for each grid point and time step.
 
     sst — the "analysed_sst" DataArray from fetch_data(), e.g. ds["analysed_sst"].
     """

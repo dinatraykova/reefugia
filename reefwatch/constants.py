@@ -9,7 +9,7 @@ BASELINE_END = "2020-12-31"
 # Time period 2023 coral bleaching event —
 # worst on record globally, severely impacted the Coral Triangle
 ANALYSIS_START = "2023-01-01"
-ANALYSIS_END = "2023-09-01"
+ANALYSIS_END = "2023-12-01"
 
 # Climatology threshold: percentile of SST per day-of-year and grid point,
 # smoothed with a rolling window (Hobday et al. 2016)
