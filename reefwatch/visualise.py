@@ -40,9 +40,6 @@ def plot_mhw_days(mhw_days: xr.DataArray,
             linestyle="none",
             transform=ccrs.PlateCarree(),
             label=f"Hotspot ({int(mhw_days.max().values)} days)")
-    #ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02),
-    #      frameon=True)
-    #plt.tight_layout()
     ax.legend()
 
     if title is None:
@@ -76,11 +73,28 @@ def plot_dhw(dhw: xr.DataArray,
         transform=ccrs.PlateCarree(),
         cmap=custom_cmap,
         vmin=0,
-        vmax=20
+        # vmax covers full NOAA bleaching alert scale (Alert 1-4: 4, 8, 12, 16°C-weeks)
+        # scales up if data exceeds 16, capped at 20 (near complete mortality threshold)
+        vmax = min(max(16, float(dhw_max.max().values) * 1.1), 20)
     )
-    #plt.colorbar(mesh, ax=ax, label="DHW (°C-weeks)", shrink=0.8)
-    plt.colorbar(mesh, ax=ax, label="Number of MHW days", 
-             fraction=0.046, pad=0.04)
+
+    cbar = plt.colorbar(mesh, ax=ax, label="DHW (°C-weeks)", 
+                        fraction=0.046, pad=0.04)
+    ticks = [0, 4, 8, 12, 16]
+    labels = [
+        " 0 — No stress",
+        " 4 — Watch",
+        " 8 — Alert 1 (bleaching likely)",
+        "12 — Alert 2 (severe bleaching)",
+        "16 — Alert 3 (mass mortality)",
+    ]
+
+    if vmax > 16:
+        ticks.append(vmax)
+        labels.append(f"{vmax:.0f} — Alert 4 (near complete mortality)")
+
+    cbar.set_ticks(ticks)
+    cbar.set_ticklabels(labels)
 
     ax.plot(hotspot_lon, hotspot_lat,
                 marker="*",
@@ -89,10 +103,7 @@ def plot_dhw(dhw: xr.DataArray,
                 linestyle="none",
                 transform=ccrs.PlateCarree(),
                 label=f"Hotspot({max_dhw:.0f} DHW)")
-    #ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.02),
-    #          frameon=True)
     ax.legend()
-    #plt.tight_layout()
     
 
     if title is None:

@@ -1,5 +1,7 @@
 import os
 import click
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from reefwatch import fetch, detect, analyse, visualise
 from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
@@ -11,6 +13,7 @@ from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
 @click.option("--end", default=ANALYSIS_END, show_default=True, help="End date (YYYY-MM-DD)")
 @click.option("--comparison_years", default="1991,2023", show_default=True, 
               help="Comma-separated years for MHW comparison (e.g. 1991,2023)")
+
 def main(region, start, end, comparison_years):
     """🪸 Reefwatch — coral bleaching thermal stress analysis."""
     click.echo(f"\n🌊 Fetching SST data for {region} from {start} to {end}...")
@@ -69,7 +72,7 @@ def main(region, start, end, comparison_years):
         title=f"MHW days {start[:4]} — {region}"
     )
     fig_mhw.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start[:4]}.png"), 
-                    dpi=150, bbox_inches="tight")
+                    dpi=256, bbox_inches='tight', pad_inches = 0.1)
     plt.close(fig_mhw)
 
     # plot DHW
@@ -81,7 +84,7 @@ def main(region, start, end, comparison_years):
         title=f"Max DHW {start[:4]} — {region}"
     )
     fig_dhw.savefig(os.path.join(output_dir, f"dhw_{region}_{start[:4]}.png"),
-                    dpi=150, bbox_inches="tight")
+                    dpi=256, bbox_inches='tight', pad_inches = 0.1)
     plt.close(fig_dhw)
 
     click.echo(f"\n Plots saved to {output_dir}/")
