@@ -2,7 +2,6 @@ import xarray as xr
 import copernicusmarine
 
 # Bounding boxes for key coral reef regions
-# Source: Coral Triangle Initiative (CTI-CFF, 2009), Wikipedia, GBRMPA
 # TODO: replace with proper polygon boundaries from regionmask for finer analysis
 REGIONS = {
     "coral_triangle": {
