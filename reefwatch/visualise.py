@@ -2,6 +2,7 @@
 #      Time series plot (SST vs threshold) for a selected pixel
 #      Animated map showing MHW/DHW progression through the year
 #      Interactive dashboard#
+
 import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors

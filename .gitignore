@@ -4,6 +4,9 @@
 # Virtual environment
 venv/
 
+# Output dir
+outputs/
+
 # Python cache
 __pycache__/
 *.pyc

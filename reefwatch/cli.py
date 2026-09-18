@@ -1,5 +1,7 @@
+import os
 import click
-from reefwatch import fetch, detect, analyse
+import matplotlib.pyplot as plt
+from reefwatch import fetch, detect, analyse, visualise
 from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
 
 @click.command()
@@ -16,10 +18,10 @@ def main(region, start, end, comparison_years):
     ds = fetch.fetch_data(region,start,end)
 
     sst = ds["analysed_sst"]
-    ocean_mask = ~sst.isel(time=0).isnull().compute()  # False where NaN (land), True where has data (ocean)
+    ocean_mask = ~sst.isel(time=0).isnull().compute()  # True where ocean, False where land
 
     mhw = detect.compute_mhw(sst, region)
-    mhw_days = mhw["mhw"].sum(dim="time")
+    mhw_days = mhw["mhw"].sum(dim="time").compute()
     mhw_summary = analyse.summarise_mhw(mhw_days, ocean_mask)
     click.echo("\n── MHW Summary ──────────────────")
     click.echo(f"Mean MHW days: {mhw_summary['mean_days']:.1f}")
@@ -46,6 +48,43 @@ def main(region, start, end, comparison_years):
     click.echo("\n── Monthly SST Anomaly ──────────")
     anomaly = analyse.monthly_sst_anomaly(sst, region, ocean_mask)
     click.echo(anomaly.to_string())
+
+    # Create output dir if it doesn't exist
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    output_dir = os.path.join(repo_root, "outputs")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # save analysis data
+    anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{region}_{start[:4]}.csv"))
+    year_comparison.to_csv(os.path.join(output_dir, f"year_comparison_{region}.csv"))
+
+    click.echo(f"Data saved to {output_dir}/")
+    click.echo("\n── Generating plots ──────────")
+
+    # plot MHW days
+    fig_mhw = visualise.plot_mhw_days(
+        mhw_days,
+        hotspot_lat=mhw_summary["hotspot_lat"],
+        hotspot_lon=mhw_summary["hotspot_lon"],
+        title=f"MHW days {start[:4]} — {region}"
+    )
+    fig_mhw.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start[:4]}.png"), 
+                    dpi=150, bbox_inches="tight")
+    plt.close(fig_mhw)
+
+    # plot DHW
+    fig_dhw = visualise.plot_dhw(
+        dhw,
+        hotspot_lat=dhw_summary["hotspot_lat"],
+        hotspot_lon=dhw_summary["hotspot_lon"],
+        max_dhw=dhw_summary["max_dhw"],
+        title=f"Max DHW {start[:4]} — {region}"
+    )
+    fig_dhw.savefig(os.path.join(output_dir, f"dhw_{region}_{start[:4]}.png"),
+                    dpi=150, bbox_inches="tight")
+    plt.close(fig_dhw)
+
+    click.echo(f"\n Plots saved to {output_dir}/")
 
 if __name__ == "__main__":
     main()
