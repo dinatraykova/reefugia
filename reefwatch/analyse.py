@@ -51,38 +51,13 @@ def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
         "hotspot_lon": float(dhw_max.longitude[max_idx["longitude"].values]),
         }
 
-def compare_years(region_name: str, years: list[int], ocean_mask: xr.DataArray) -> pd.DataFrame:
-    """Compare MHW statistics across multiple years for a region.
-    
-    Args:
-        region_name: region to analyse
-        years:       list of years to compare e.g. [1991, 2023]
-        ocean_mask:  boolean DataArray marking ocean pixels as True, land as False
-    
-    Returns:
-        DataFrame with one row per year and columns for key MHW metrics
-    """
-    rows = []
-    for year in years:
-        sst = fetch.fetch_data(region_name, f"{year}-01-01", f"{year}-12-31")["analysed_sst"]
-        mhw_result = detect.compute_mhw(sst, region_name)
-        mhw_days = mhw_result["mhw"].sum(dim="time").compute()
-        summary = summarise_mhw(mhw_days, ocean_mask)
-        summary["year"] = year
-        rows.append(summary)
-    
-    return pd.DataFrame(rows).set_index("year")
-
-def monthly_sst_anomaly(sst: xr.DataArray, region_name: str, ocean_mask: xr.DataArray) -> pd.DataFrame:
+def monthly_sst_anomaly(sst: xr.DataArray, monthly_climatology: xr.DataArray, ocean_mask: xr.DataArray) -> pd.DataFrame:
     """Compare monthly mean SST against 30-year climatological baseline.
     
     Args:
-        sst:         SST DataArray for analysis period
-        region_name: region name for loading historical baseline
-        ocean_mask:  boolean DataArray marking ocean pixels as True, land as False
-    
-    Returns:
-        DataFrame with columns: month, sst_mean, climatology_mean (°C), anomaly
+        sst:                  SST DataArray for analysis period
+        monthly_climatology:  monthly mean SST from 1991-2020 baseline (month, lat, lon)
+        ocean_mask:           boolean DataArray marking ocean pixels as True
     """
     import calendar
 
@@ -93,13 +68,9 @@ def monthly_sst_anomaly(sst: xr.DataArray, region_name: str, ocean_mask: xr.Data
                      .mean()
                      .compute())
 
-    # 30 year baseline
-    historical = fetch.fetch_data(region_name, BASELINE_START, BASELINE_END)
-    hist_monthly = (historical["analysed_sst"].where(ocean_mask)
-                                              .mean(dim=["latitude", "longitude"])
-                                              .groupby("time.month")
-                                              .mean()
-                                              .compute()) 
+    hist_monthly = (monthly_climatology.where(ocean_mask)
+                                       .mean(dim=["latitude", "longitude"])
+                                       .compute())
 
     # only use months present in the analysis period
     months_present = sst_monthly.month.values

@@ -12,10 +12,8 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data files - too large for git
+# Data files - too large for git, computed once and saved locally
 data/
-*.nc
-*.zarr
 
 # Jupyter checkpoints
 .ipynb_checkpoints/

@@ -1,5 +1,4 @@
 #TODO: 
-#      Time series plot (SST vs threshold) for a selected pixel
 #      Animated map showing MHW/DHW progression through the year
 #      Interactive dashboard#
 
@@ -66,6 +65,7 @@ def plot_dhw(dhw: xr.DataArray,
     custom_cmap = mcolors.LinearSegmentedColormap.from_list(
         "dhw", list(zip([b/20 for b in bounds], colors)))
 
+    vmax = min(max(16, float(dhw_max.max().values) * 1.1), 20)
     mesh = ax.pcolormesh(
         dhw.longitude,
         dhw.latitude,
@@ -75,7 +75,7 @@ def plot_dhw(dhw: xr.DataArray,
         vmin=0,
         # vmax covers full NOAA bleaching alert scale (Alert 1-4: 4, 8, 12, 16°C-weeks)
         # scales up if data exceeds 16, capped at 20 (near complete mortality threshold)
-        vmax = min(max(16, float(dhw_max.max().values) * 1.1), 20)
+        vmax = vmax
     )
 
     cbar = plt.colorbar(mesh, ax=ax, label="DHW (°C-weeks)", 

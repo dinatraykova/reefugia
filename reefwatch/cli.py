@@ -5,17 +5,21 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from reefwatch import fetch, detect, analyse, visualise
 from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
+import time
+import json
 
 @click.command()
 # Region for analysis, default is coral_triangle
 @click.option("--region", default="coral_triangle", show_default=True, help="Region to analyse")
 @click.option("--start", default=ANALYSIS_START, show_default=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end", default=ANALYSIS_END, show_default=True, help="End date (YYYY-MM-DD)")
-@click.option("--comparison_years", default="1991,2023", show_default=True, 
-              help="Comma-separated years for MHW comparison (e.g. 1991,2023)")
+#@click.option("--comparison_years", default="1991,2023", show_default=True, 
+#              help="Comma-separated years for MHW comparison (e.g. 1991,2023)")
 
-def main(region, start, end, comparison_years):
+def main(region, start, end):
     """🪸 Reefwatch — coral bleaching thermal stress analysis."""
+
+    start_time = time.time()
     click.echo(f"\n🌊 Fetching SST data for {region} from {start} to {end}...")
     
     ds = fetch.fetch_data(region,start,end)
@@ -23,7 +27,7 @@ def main(region, start, end, comparison_years):
     sst = ds["analysed_sst"]
     ocean_mask = ~sst.isel(time=0).isnull().compute()  # True where ocean, False where land
 
-    mhw = detect.compute_mhw(sst, region)
+    mhw = detect.load_or_compute_mhw(sst, region, start, end)
     mhw_days = mhw["mhw"].sum(dim="time").compute()
     mhw_summary = analyse.summarise_mhw(mhw_days, ocean_mask)
     click.echo("\n── MHW Summary ──────────────────")
@@ -32,7 +36,7 @@ def main(region, start, end, comparison_years):
     click.echo(f"Max MHW days: {mhw_summary['max_days']:.0f}")
     click.echo(f"% ocean affected: {mhw_summary['pct_affected']:.1f}%")
 
-    dhw = detect.compute_dhw(sst, region)
+    dhw = detect.load_or_compute_dhw(sst, region, start, end)
     dhw_summary = analyse.summarise_dhw(dhw, ocean_mask)
 
     click.echo("\n── DHW Summary ──────────────────")
@@ -41,15 +45,10 @@ def main(region, start, end, comparison_years):
     click.echo(f"% above 4 DHW: {dhw_summary['pct_above_4']:.1f}%")
     click.echo(f"% above 8 DHW: {dhw_summary['pct_above_8']:.1f}%")
 
-
-    click.echo("\n── Year Comparison ──────────────")
-    years = [int(y) for y in comparison_years.split(",")]
-    year_comparison = analyse.compare_years(region, years, ocean_mask)
-    click.echo(year_comparison.to_string())
-
     
     click.echo("\n── Monthly SST Anomaly ──────────")
-    anomaly = analyse.monthly_sst_anomaly(sst, region, ocean_mask)
+    _, monthly_climatology = detect.load_or_compute_mmm(region)
+    anomaly = analyse.monthly_sst_anomaly(sst, monthly_climatology, ocean_mask)
     click.echo(anomaly.to_string())
 
     # Create output dir if it doesn't exist
@@ -58,8 +57,19 @@ def main(region, start, end, comparison_years):
     os.makedirs(output_dir, exist_ok=True)
 
     # save analysis data
-    anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{region}_{start[:4]}.csv"))
-    year_comparison.to_csv(os.path.join(output_dir, f"year_comparison_{region}.csv"))
+    anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{region}_{start}_{end}.csv"))
+
+    with open(os.path.join(output_dir, f"mhw_summary_{region}_{start}_{end}.json"), "w") as f:
+        json.dump(mhw_summary, f, indent=2)
+
+    with open(os.path.join(output_dir, f"dhw_summary_{region}_{start}_{end}.json"), "w") as f:
+        json.dump(dhw_summary, f, indent=2)
+
+    # save MHW days spatial map as NetCDF
+    mhw_days.to_netcdf(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.nc"))
+
+    # save DHW max spatial map as NetCDF  
+    dhw.to_netcdf(os.path.join(output_dir, f"dhw_max_{region}_{start}_{end}.nc"))
 
     click.echo(f"Data saved to {output_dir}/")
     click.echo("\n── Generating plots ──────────")
@@ -88,6 +98,10 @@ def main(region, start, end, comparison_years):
     plt.close(fig_dhw)
 
     click.echo(f"\n Plots saved to {output_dir}/")
+    elapsed = time.time() - start_time
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    click.echo(f"\n⏱️  Total run time: {minutes}m {seconds}s")
 
 if __name__ == "__main__":
     main()
