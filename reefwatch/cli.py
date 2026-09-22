@@ -1,12 +1,16 @@
+import json
 import os
-import click
+import time
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import xarray as xr
+import click
+
+# Local 
 from reefwatch import fetch, detect, analyse, visualise
 from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
-import time
-import json
 
 @click.command()
 # Region for analysis, default is coral_triangle
@@ -68,8 +72,8 @@ def main(region, start, end):
     # save MHW days spatial map as NetCDF
     mhw_days.to_netcdf(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.nc"))
 
-    # save DHW max spatial map as NetCDF  
-    dhw.to_netcdf(os.path.join(output_dir, f"dhw_max_{region}_{start}_{end}.nc"))
+    # save DHW spatial map as NetCDF  
+    dhw.to_netcdf(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
 
     click.echo(f"Data saved to {output_dir}/")
     click.echo("\n── Generating plots ──────────")
@@ -98,6 +102,19 @@ def main(region, start, end):
     plt.close(fig_dhw)
 
     click.echo(f"\n Plots saved to {output_dir}/")
+
+    # animate DHW progression
+    click.echo("\n── Generating DHW animation ──────────")
+    dhw_full = xr.open_dataarray(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
+    anim = visualise.plot_dhw_animation(dhw_full, title=f"DHW — {region}")
+    anim.save(
+        os.path.join(output_dir, f"dhw_animation_{region}_{start}_{end}.mp4"),
+        writer="ffmpeg",
+        fps=10
+    )
+    plt.close()
+    click.echo("Animation saved!")
+
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
