@@ -55,12 +55,12 @@ def main(region, start, end):
     anomaly = analyse.monthly_sst_anomaly(sst, monthly_climatology, ocean_mask)
     click.echo(anomaly.to_string())
 
+    # Save analysis data
     # Create output dir if it doesn't exist
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(repo_root, "outputs")
     os.makedirs(output_dir, exist_ok=True)
 
-    # save analysis data
     anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{region}_{start}_{end}.csv"))
 
     with open(os.path.join(output_dir, f"mhw_summary_{region}_{start}_{end}.json"), "w") as f:
@@ -76,6 +76,7 @@ def main(region, start, end):
     dhw.to_netcdf(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
 
     click.echo(f"Data saved to {output_dir}/")
+
     click.echo("\n── Generating plots ──────────")
 
     # plot MHW days
@@ -85,7 +86,7 @@ def main(region, start, end):
         hotspot_lon=mhw_summary["hotspot_lon"],
         title=f"MHW days {start[:4]} — {region}"
     )
-    fig_mhw.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start[:4]}.png"), 
+    fig_mhw.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.png"), 
                     dpi=256, bbox_inches='tight', pad_inches = 0.1)
     plt.close(fig_mhw)
 
@@ -97,16 +98,29 @@ def main(region, start, end):
         max_dhw=dhw_summary["max_dhw"],
         title=f"Max DHW {start[:4]} — {region}"
     )
-    fig_dhw.savefig(os.path.join(output_dir, f"dhw_{region}_{start[:4]}.png"),
+    fig_dhw.savefig(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.png"),
                     dpi=256, bbox_inches='tight', pad_inches = 0.1)
     plt.close(fig_dhw)
+
+    # plot max SST anomaly
+    climatology = detect.load_or_compute_climatology(region)
+    fig_anom = visualise.plot_sst_anomaly_max(
+        sst,
+        climatology,
+        title=f"Max SST anomaly {start:4} — {region}"
+    )
+    fig_anom.savefig(
+        os.path.join(output_dir, f"sst_anomaly_max_{region}_{start}_{end}.png"),
+        dpi=256, bbox_inches="tight", pad_inches=0.1
+    )
+    plt.close(fig_anom)
 
     click.echo(f"\n Plots saved to {output_dir}/")
 
     # animate DHW progression
     click.echo("\n── Generating DHW animation ──────────")
-    dhw_full = xr.open_dataarray(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
-    anim = visualise.plot_dhw_animation(dhw_full, title=f"DHW — {region}")
+    #dhw_full = xr.open_dataarray(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
+    anim = visualise.plot_dhw_animation(dhw, title=f"DHW — {region}")
     anim.save(
         os.path.join(output_dir, f"dhw_animation_{region}_{start}_{end}.mp4"),
         writer="ffmpeg",

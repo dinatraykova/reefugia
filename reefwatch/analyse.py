@@ -4,8 +4,7 @@ import pandas as pd
 import warnings
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 
-from reefwatch import fetch, detect
-from reefwatch.constants import BASELINE_START, BASELINE_END, KELVIN_TO_CELSIUS
+from reefwatch.constants import KELVIN_TO_CELSIUS
 
 def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
     """Summarise MHW statistics across the region.
@@ -15,7 +14,7 @@ def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
         ocean_mask: boolean DataArray marking ocean pixels as True, land as False.
     """
 
-    max_idx = mhw_days.argmax(dim=["latitude", "longitude"])
+    max_idx = mhw_days.where(ocean_mask).argmax(dim=["latitude", "longitude"])
     mhw_counts = mhw_days.where(ocean_mask).values.flatten()
     mhw_counts = mhw_counts[~np.isnan(mhw_counts)]
 
@@ -37,7 +36,7 @@ def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
         ocean_mask: boolean DataArray marking ocean pixels as True, land as False."""
 
     dhw_max = dhw.max(dim='time')
-    max_idx = dhw_max.argmax(dim=["latitude","longitude"])
+    max_idx = dhw_max.where(ocean_mask).argmax(dim=["latitude","longitude"])
     dhw_values = dhw_max.where(ocean_mask).values.flatten()
     dhw_values = dhw_values[~np.isnan(dhw_values)]
 
