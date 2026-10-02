@@ -1,4 +1,4 @@
-#TODO: 
+#TODO:
 #      Interactive dashboard#
 
 import xarray as xr
@@ -7,6 +7,7 @@ import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.animation as animation
+import pandas as pd
 
 def plot_mhw_days(mhw_days: xr.DataArray,
                   hotspot_lat: float,
@@ -75,7 +76,7 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
         vmax=int(sst_anomaly_max.max().values)
     )
     plt.colorbar(mesh, ax=ax, label="SST anomaly (°C)", pad=0.04)
-    
+
     ax.plot(hotspot_lon, hotspot_lat,
             marker="*",
             color="blue",
@@ -86,7 +87,7 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
     )
     ax.legend()
     plt.tight_layout()
-    
+
     if title is None:
         title = "Maximum SST anomaly (°C)"
     ax.set_title(title)
@@ -122,9 +123,9 @@ def plot_dhw(dhw: xr.DataArray,
 
 def plot_dhw_animation(dhw: xr.DataArray,
                        title: str = None) -> animation.FuncAnimation:
-    
+
     dhw_computed = dhw.compute()
-    
+
     fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
                            subplot_kw={"projection": ccrs.PlateCarree()})
 #                           constrained_layout=True)
@@ -147,10 +148,10 @@ def plot_dhw_animation(dhw: xr.DataArray,
 
 def _create_dhw_mesh(dhw_2d: xr.DataArray, ax) -> object:
     """Set up mesh and colorbar for DHW plots.
-    
+
     Args:
         dhw_2d: 2D DHW DataArray (latitude, longitude) for initial frame
-    
+
     Returns:
         mesh
     """
@@ -168,7 +169,7 @@ def _create_dhw_mesh(dhw_2d: xr.DataArray, ax) -> object:
             "12 — Alert 3\nmass mortality",
             "16 — Alert 4\nnear complete mortality",
     ]
-    
+
     if vmax > 16:
         bounds.append(vmax)
         colors.append("black")

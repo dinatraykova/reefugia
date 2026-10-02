@@ -4,11 +4,11 @@ import pandas as pd
 import warnings
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 
-from reefwatch.constants import KELVIN_TO_CELSIUS
+from reefugia.constants import KELVIN_TO_CELSIUS
 
 def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
     """Summarise MHW statistics across the region.
-    
+
     Args:
         mhw_days:   number of MHW days per pixel (latitude, longitude)
         ocean_mask: boolean DataArray marking ocean pixels as True, land as False.
@@ -30,7 +30,7 @@ def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
 
 def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
     """Summarise DHW statistics across the region.
-    
+
     Args:
         dhw:        Degree Heating Weeks DataArray (time, latitude, longitude)
         ocean_mask: boolean DataArray marking ocean pixels as True, land as False."""
@@ -52,7 +52,7 @@ def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
 
 def monthly_sst_anomaly(sst: xr.DataArray, monthly_climatology: xr.DataArray, ocean_mask: xr.DataArray) -> pd.DataFrame:
     """Compare monthly mean SST against 30-year climatological baseline.
-    
+
     Args:
         sst:                  SST DataArray for analysis period
         monthly_climatology:  monthly mean SST from 1991-2020 baseline (month, lat, lon)

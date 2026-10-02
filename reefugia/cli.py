@@ -9,8 +9,8 @@ import xarray as xr
 import click
 
 # Local 
-from reefwatch import fetch, detect, analyse, visualise
-from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
+from reefugia import fetch, detect, analyse, visualise
+from reefugia.constants import ANALYSIS_START, ANALYSIS_END
 
 @click.command()
 # Region for analysis, default is coral_triangle
@@ -21,7 +21,7 @@ from reefwatch.constants import ANALYSIS_START, ANALYSIS_END
 #              help="Comma-separated years for MHW comparison (e.g. 1991,2023)")
 
 def main(region, start, end):
-    """🪸 Reefwatch — coral bleaching thermal stress analysis."""
+    """🪸 Reefugia — coral bleaching thermal stress analysis."""
 
     start_time = time.time()
     click.echo(f"\n🌊 Fetching SST data for {region} from {start} to {end}...")
@@ -51,8 +51,8 @@ def main(region, start, end):
 
     
     click.echo("\n── Monthly SST Anomaly ──────────")
-    _, monthly_climatology = detect.load_or_compute_mmm(region)
-    anomaly = analyse.monthly_sst_anomaly(sst, monthly_climatology, ocean_mask)
+    climatology = detect.load_or_compute_climatology(region)
+    anomaly = analyse.monthly_sst_anomaly(sst, climatology["monthly_mean"], ocean_mask)
     click.echo(anomaly.to_string())
 
     # Save analysis data
@@ -103,11 +103,10 @@ def main(region, start, end):
     plt.close(fig_dhw)
 
     # plot max SST anomaly
-    climatology = detect.load_or_compute_climatology(region)
     fig_anom = visualise.plot_sst_anomaly_max(
         sst,
         climatology,
-        title=f"Max SST anomaly {start:4} — {region}"
+        title=f"Max SST anomaly {start[:4]} — {region}"
     )
     fig_anom.savefig(
         os.path.join(output_dir, f"sst_anomaly_max_{region}_{start}_{end}.png"),
