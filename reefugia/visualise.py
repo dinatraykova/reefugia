@@ -146,6 +146,65 @@ def plot_dhw_animation(dhw: xr.DataArray,
     )
     return anim
 
+
+def plot_monthly_matrix(da: xr.DataArray,
+                        label: str = "DHW (°C-weeks)",
+                        title: str = None) -> plt.Figure:
+    """Month × year matrix of spatially averaged values.
+
+    Falls back to a bar chart when only one year is present.
+    da — any (time, latitude, longitude) DataArray.
+    """
+    da_mean = da.mean(dim=["latitude", "longitude"]).compute()
+    df = da_mean.to_series().rename("value").reset_index()
+    df["year"] = df["time"].dt.year
+    df["month"] = df["time"].dt.month
+    matrix = df.groupby(["month", "year"])["value"].mean().reset_index()
+    matrix = matrix.pivot(index="month", columns="year", values="value")
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    da_max = da.max(dim=["latitude", "longitude"]).compute()
+    df_max = da_max.to_series().rename("value").reset_index()
+    df_max["year"] = df_max["time"].dt.year
+    df_max["month"] = df_max["time"].dt.month
+    matrix_max = df_max.groupby(["month", "year"])["value"].max().reset_index()
+    matrix_max = matrix_max.pivot(index="month", columns="year", values="value")
+
+    if len(matrix.columns) == 1:
+        year = matrix.columns[0]
+
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=100)
+        ax.barh(range(12), matrix[year].values,
+            color="#b03a2e", alpha=0.5, label="Spatial mean")
+        ax.barh(range(12), matrix_max[year].values,
+            color="none", edgecolor="#7b241c", linewidth=1.5,
+            linestyle="--", label="Spatial max")
+        ax.set_yticks(range(12))
+        ax.set_yticklabels(month_labels)
+        ax.set_xlabel(label)
+        ax.set_title(title or f"Monthly DHW — {year}")
+        ax.legend()
+
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 8), dpi=100)
+        matrix_max = df_max.groupby(["month", "year"])["value"].max().reset_index()
+        matrix_max = matrix_max.pivot(index="month", columns="year", values="value")
+
+        for ax, mat, subtitle in zip(axes, [matrix, matrix_max], ["Spatial mean", "Spatial max"]):
+            im = ax.imshow(mat.values, aspect="auto", cmap="YlOrRd", origin="lower")
+            plt.colorbar(im, ax=ax, label=label, pad=0.02)
+            ax.set_xticks(range(len(mat.columns)))
+            ax.set_xticklabels(mat.columns)
+            ax.set_yticks(range(12))
+            ax.set_yticklabels(month_labels)
+            ax.set_xlabel("Year")
+            ax.set_title(f"{title or f'Monthly {label}'} — {subtitle}")
+
+    plt.tight_layout()
+    return fig
+
 def _create_dhw_mesh(dhw_2d: xr.DataArray, ax) -> object:
     """Set up mesh and colorbar for DHW plots.
 
