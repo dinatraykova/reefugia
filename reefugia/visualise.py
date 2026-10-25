@@ -1,19 +1,16 @@
-#TODO:
-#      Interactive dashboard#
-
+import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.animation as animation
-import pandas as pd
 
 def plot_mhw_days(mhw_days: xr.DataArray,
                   hotspot_lat: float,
                   hotspot_lon: float,
                   title: str = None) -> plt.Figure:
-
+    """Map of MHW days per pixel, with the hotspot marked."""
     fig, ax = plt.subplots(
         figsize=(8, 8), dpi=100, subplot_kw={"projection": ccrs.PlateCarree()})
     ax.add_feature(cfeature.COASTLINE)
@@ -48,18 +45,16 @@ def plot_mhw_days(mhw_days: xr.DataArray,
 def plot_sst_anomaly_max(sst: xr.DataArray,
                          climatology: xr.Dataset,
                          title: str = None) -> plt.Figure:
-    """Plot maximum SST anomaly at each pixel over the analysis period."""
+    """Map of max monthly SST anomaly (vs 1991–2020 monthly mean) per pixel."""
+    sst_monthly = sst.resample(time="MS").mean()
+    clim = climatology["monthly_mean"].sel(month=sst_monthly.time.dt.month).drop_vars("month")
+    sst_anomaly = (sst_monthly - clim).compute()
+    sst_anomaly_max = sst_anomaly.max(dim="time")
 
-    doy = sst.time.dt.dayofyear
-    threshold = climatology["sst_threshold"].sel(dayofyear=doy, method="nearest")
-    sst_anomaly = sst - threshold
-    sst_anomaly_max = sst_anomaly.max(dim="time").compute()
     max_idx = sst_anomaly_max.argmax(dim=["latitude", "longitude"])
     hotspot_lat = float(sst_anomaly_max.latitude[max_idx["latitude"]].values)
     hotspot_lon = float(sst_anomaly_max.longitude[max_idx["longitude"]].values)
-
-    anomaly_max_time_idx = int(sst_anomaly.max(dim=["latitude", "longitude"]).argmax(dim="time").values)
-    anomaly_max_date = str(sst_anomaly.time[anomaly_max_time_idx].values)[:10]
+    hotspot_month = str(sst_anomaly.isel(max_idx).idxmax(dim="time").values)[:7]
 
     fig, ax = plt.subplots(
             figsize=(8, 8), dpi=100, subplot_kw={"projection": ccrs.PlateCarree()})
@@ -73,9 +68,9 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
         transform=ccrs.PlateCarree(),
         cmap="Reds",
         vmin=0,
-        vmax=int(sst_anomaly_max.max().values)
+        vmax=float(sst_anomaly_max.max().values)
     )
-    plt.colorbar(mesh, ax=ax, label="SST anomaly (°C)", pad=0.04)
+    plt.colorbar(mesh, ax=ax, label="Monthly SST anomaly (°C)", pad=0.04)
 
     ax.plot(hotspot_lon, hotspot_lat,
             marker="*",
@@ -83,13 +78,13 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
             markersize=8,
             linestyle="none",
             transform=ccrs.PlateCarree(),
-            label=f"Hotspot ({int(sst_anomaly_max.max().values)} °C) \nDate: {anomaly_max_date}"
+            label=f"Hotspot ({float(sst_anomaly_max.max().values):.1f} °C) \nMonth: {hotspot_month}"
     )
     ax.legend()
     plt.tight_layout()
 
     if title is None:
-        title = "Maximum SST anomaly (°C)"
+        title = "Max monthly SST anomaly (°C)"
     ax.set_title(title)
     return fig
 
@@ -98,11 +93,10 @@ def plot_dhw(dhw: xr.DataArray,
              hotspot_lon: float,
              max_dhw: float,
              title: str = None) -> plt.Figure:
-
+    """Map of peak DHW per pixel with NOAA alert bands, hotspot marked."""
     dhw_max = dhw.max(dim="time").compute()
     dhw_max_time_idx = int(dhw.max(dim=["latitude", "longitude"]).argmax(dim="time").values)
     dhw_max_date = str(dhw.time[dhw_max_time_idx].values)[:10]
-    #fig, ax, _ = _create_dhw_figure(dhw_max)
 
     fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
                        subplot_kw={"projection": ccrs.PlateCarree()})
@@ -128,7 +122,6 @@ def plot_dhw_animation(dhw: xr.DataArray,
 
     fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
                            subplot_kw={"projection": ccrs.PlateCarree()})
-#                           constrained_layout=True)
     mesh = _create_dhw_mesh(dhw_computed.isel(time=0), ax)
     date_title = ax.set_title(f"{title or 'DHW'} — {str(dhw.time[0].values)[:10]}")
     plt.tight_layout()
@@ -146,15 +139,10 @@ def plot_dhw_animation(dhw: xr.DataArray,
     )
     return anim
 
-
 def plot_monthly_matrix(da: xr.DataArray,
                         label: str = "DHW (°C-weeks)",
                         title: str = None) -> plt.Figure:
-    """Month × year matrix of spatially averaged values.
-
-    Falls back to a bar chart when only one year is present.
-    da — any (time, latitude, longitude) DataArray.
-    """
+    """Month × year matrix of regional means (bar chart for one year)."""
     da_mean = da.mean(dim=["latitude", "longitude"]).compute()
     df = da_mean.to_series().rename("value").reset_index()
     df["year"] = df["time"].dt.year
@@ -205,15 +193,96 @@ def plot_monthly_matrix(da: xr.DataArray,
     plt.tight_layout()
     return fig
 
+def plot_trend(trend: dict,
+               forecast_years: list[int] = None,
+               region_name: str = "",
+               title: str = None) -> plt.Figure:
+    """Annual max DHW with fitted trend and optional forecast."""
+    from reefugia.trend import forecast_dhw
+
+    years  = trend["years"]
+    values = trend["values"]
+    y_fit  = trend["y_fit"]
+    r2     = trend["r2"]
+    degree = trend["degree"]
+    degree_label = {1: "linear", 2: "quadratic", 3: "cubic"}.get(degree, f"degree-{degree}")
+
+    fig, ax = plt.subplots(figsize=(11, 5), dpi=110)
+
+    # observed points
+    ax.scatter(years, values, color="#1a6b9a", s=28, zorder=3, label="Annual max DHW")
+
+    # fitted curve
+    ax.plot(years, y_fit, color="#c0392b", linewidth=2,
+            label=f"{degree_label} fit  (R²={r2:.2f})")
+
+    # forecast
+    if forecast_years:
+        fc_values = forecast_dhw(trend, forecast_years)
+        fc_years  = np.array(forecast_years, dtype=float)
+
+        # extrapolation uncertainty band — widen linearly with distance
+        last_year = years[-1]
+        residuals = values[~np.isnan(values)] - y_fit[~np.isnan(y_fit)]
+        sigma = np.std(residuals)
+        spread = sigma * (1 + (fc_years - last_year) / 10)
+
+        ax.plot(fc_years, fc_values, color="#c0392b", linewidth=1.5,
+                linestyle="--", label="Forecast")
+        ax.fill_between(fc_years,
+                        fc_values - spread,
+                        fc_values + spread,
+                        color="#c0392b", alpha=0.12, label="±1σ envelope")
+        # vertical divider
+        ax.axvline(last_year + 0.5, color="grey", linewidth=0.8, linestyle=":")
+
+    # bleaching threshold reference
+    ax.axhline(4, color="#e67e22", linewidth=1, linestyle="--", alpha=0.7,
+               label="Bleaching threshold (4 °C-weeks)")
+
+    ax.set_xlabel("Year")
+    ax.set_ylabel("DHW (°C-weeks)")
+    ax.set_title(title or f"Annual max DHW trend — {region_name}")
+    ax.legend(fontsize=9, framealpha=0.7)
+    ax.set_xlim(years[0] - 1, (forecast_years or [years[-1]])[-1] + 1)
+    ax.set_ylim(bottom=0)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_trend_map(slope_da: xr.DataArray,
+                   title: str = "DHW trend (°C-weeks yr⁻¹)",
+                   land_color: str = "#c8c8c8") -> plt.Figure:
+    """Map of per-pixel DHW trend from pixel_trend()."""
+    lats = slope_da.latitude.values
+    lons = slope_da.longitude.values
+    data = slope_da.values
+
+    # symmetric colour scale around zero
+    vmax = np.nanpercentile(np.abs(data), 97)
+    vmin = -vmax
+
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=110,
+                           subplot_kw={"projection": ccrs.PlateCarree()})
+
+    im = ax.pcolormesh(lons, lats, data,
+                       cmap="RdBu_r", vmin=vmin, vmax=vmax,
+                       shading="nearest", transform=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.LAND, facecolor=land_color, zorder=2)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, zorder=3)
+    ax.gridlines(draw_labels=True, linewidth=0.3, color="grey", alpha=0.5)
+
+    cbar = plt.colorbar(im, ax=ax, orientation="vertical",
+                        pad=0.02, fraction=0.03)
+    cbar.set_label("DHW trend (°C-weeks yr⁻¹)")
+
+    ax.set_title(title)
+    plt.tight_layout()
+    return fig
+
 def _create_dhw_mesh(dhw_2d: xr.DataArray, ax) -> object:
-    """Set up mesh and colorbar for DHW plots.
-
-    Args:
-        dhw_2d: 2D DHW DataArray (latitude, longitude) for initial frame
-
-    Returns:
-        mesh
-    """
     # vmax covers full NOAA bleaching alert scale (Alert 1-4: 4, 8, 12, 16°C-weeks)
     # scales up if data exceeds 16, capped at 20 (near complete mortality threshold)
     vmax = min(max(16, float(dhw_2d.max().values) * 1.1), 20)
