@@ -1,5 +1,6 @@
 import os
 import zarr
+import pandas as pd
 import xarray as xr
 
 from reefugia import fetch
@@ -28,20 +29,53 @@ def get_dhw_path(region_name: str, start: str, end: str) -> str:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(repo_root, "data", f"dhw_{region_name}_{start}_{end}.zarr")
 
+# constants each cache depends on — a mismatch on load triggers a recompute
+def _climatology_params() -> dict:
+    return {
+        "baseline_start": BASELINE_START,
+        "baseline_end": BASELINE_END,
+        "climatology_percentile": CLIMATOLOGY_PERCENTILE,
+        "climatology_smoothing_window_days": CLIMATOLOGY_SMOOTHING_WINDOW_DAYS,
+    }
+
+def _mhw_params() -> dict:
+    return {**_climatology_params(), "mhw_persistence_days": MHW_PERSISTENCE_DAYS}
+
+def _dhw_params() -> dict:
+    return {
+        "baseline_start": BASELINE_START,
+        "baseline_end": BASELINE_END,
+        "bleaching_threshold_offset": BLEACHING_THRESHOLD_OFFSET,
+        "dhw_window_days": DHW_WINDOW_DAYS,
+    }
+
+def _open_valid_cache(path: str, params: dict):
+    if not os.path.exists(path):
+        return None
+    ds = xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)
+    cached = {key: ds.attrs.get(key) for key in params}
+    if cached != params:
+        print(f"Cache {os.path.basename(path)} was computed with different "
+              f"settings — recomputing.")
+        return None
+    return ds
+
+def _write_cache(ds: xr.Dataset, path: str, params: dict) -> None:
+    ds.attrs.update(params)
+    ds.chunk("auto").to_zarr(path, zarr_format=ZARR_FORMAT, mode="w")
+    zarr.consolidate_metadata(path)
+
+def _with_lead_in(sst: xr.DataArray, region_name: str, days: int) -> xr.DataArray:
+    first = pd.Timestamp(sst.time.values[0])
+    lead = fetch.fetch_data(
+        region_name,
+        str((first - pd.Timedelta(days=days)).date()),
+        str((first - pd.Timedelta(days=1)).date()),
+    )["analysed_sst"]
+    return xr.concat([lead, sst], dim="time")
+
 # compute analysis diagnostics
 def compute_climatology(region_name: str) -> dict:
-    """Compute climatology, Max Monthly Mean SST and monthly mean from
-    1991-2020 baseline. Single fetch for all three diagnostics.
-
-    Uses WMO standard 1991-2020 baseline period.
-    Threshold is the 90th percentile SST for each day of year and grid point,
-    smoothed with an 11-day rolling window following Hobday et al. (2016).
-
-    Returns dict with keys:
-        sst_threshold: 90th percentile SST threshold (dayofyear, latitude, longitude)
-        monthly_mean:  mean SST for each month (month, latitude, longitude)
-        mmm:           Maximum Monthly Mean SST (latitude, longitude)
-    """
     historical = fetch.fetch_data(region_name, BASELINE_START, BASELINE_END)
     sst = historical["analysed_sst"]
 
@@ -61,113 +95,105 @@ def compute_climatology(region_name: str) -> dict:
     }
 
 def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
-    """Compute marine heatwave exceedance for each grid point and time step.
-
-    sst — the "analysed_sst" DataArray from fetch_data(), e.g. ds["analysed_sst"].
-    """
+    """MHW exceedance and persistence masks from ds["analysed_sst"]."""
     sst_threshold = load_or_compute_climatology(region_name)["sst_threshold"]
+
+    # lead-in so rolling windows are full from the first day
+    first = sst.time.values[0]
+    sst = _with_lead_in(sst, region_name, MHW_PERSISTENCE_DAYS - 1)
+
     doy = sst.time.dt.dayofyear
     threshold = sst_threshold.sel(dayofyear=doy, method="nearest")
 
     is_over_threshold = sst > threshold
 
-    # rolling ops need the full time axis in one chunk, or dask has to stitch
-    # together many small overlapping chunks (slow/stalls for large windows)
+    # single time chunk — rolling over many small chunks is very slow in dask
     is_over_threshold = is_over_threshold.chunk({"time": -1})
 
-    # rolling sum over previous MHW_PERSISTENCE_DAYS days
     rolling_sum = is_over_threshold.rolling(time=MHW_PERSISTENCE_DAYS, min_periods=1).sum()
 
-    # True where MHW_PERSISTENCE_DAYS consecutive days of exceedance
-    mhw = rolling_sum >= MHW_PERSISTENCE_DAYS
+    run_end = (rolling_sum >= MHW_PERSISTENCE_DAYS).astype("int8")
+
+    # backward rolling max flags the whole event, not just from day 5 on
+    reverse = slice(None, None, -1)
+    mhw = (run_end.isel(time=reverse)
+                  .rolling(time=MHW_PERSISTENCE_DAYS, min_periods=1).max()
+                  .isel(time=reverse)) > 0
+
+    # drop the lead-in days
     return {
-        "exceedance": is_over_threshold,
-        "mhw": mhw,
+        "exceedance": is_over_threshold.sel(time=slice(first, None)),
+        "mhw": mhw.sel(time=slice(first, None)),
     }
 
 def compute_dhw(sst: xr.DataArray, region_name: str) -> xr.DataArray:
-    """Compute Degree Heating Weeks following NOAA Coral Reef Watch methodology.
-
-    DHW measures accumulated heat stress above the bleaching threshold over
-    a 12-week rolling window. Bleaching threshold = MMM + 1°C.
-
-    DHW >= 4  : Alert 1 — bleaching likely
-    DHW >= 8  : Alert 2 — severe bleaching
-    DHW >= 12 : Alert 3 — mass mortality
-    DHW >= 16 : Alert 4 — near complete mortality
-
-    sst — the "analysed_sst" DataArray from fetch_data(), e.g. ds["analysed_sst"].
-    """
+    """Degree Heating Weeks (NOAA CRW method) from ds["analysed_sst"]."""
     mmm = load_or_compute_climatology(region_name)["mmm"]
 
-    # bleaching threshold: corals can tolerate slightly above their monthly maximum
-    bleaching_threshold = mmm + BLEACHING_THRESHOLD_OFFSET
+    # lead-in so rolling windows are full from the first day
+    first = sst.time.values[0]
+    sst = _with_lead_in(sst, region_name, DHW_WINDOW_DAYS - 1)
 
-    # hotspot: degrees above bleaching threshold; clip at 0
-    hotspot = (sst - bleaching_threshold).clip(min=0)
+    # NOAA CRW: HotSpots >= 1°C count in full, smaller ones as 0 (NaN kept for land)
+    hotspot = sst - mmm
+    hotspot = hotspot.where((hotspot >= BLEACHING_THRESHOLD_OFFSET) | hotspot.isnull(), 0)
 
-    # rolling ops need the full time axis in one chunk, or dask has to stitch
-    # together many small overlapping chunks (slow/stalls for large windows) —
-    # DHW_WINDOW_DAYS=84 makes this far more expensive than MHW's 5-day window
+    # single time chunk — rolling over many small chunks is very slow in dask
     hotspot = hotspot.chunk({"time": -1})
 
-    # rolling sum over DHW_WINDOW_DAYS (12 weeks), convert degree-days to degree-weeks
+    # degree-days → degree-weeks
     dhw = hotspot.rolling(time=DHW_WINDOW_DAYS, min_periods=1).sum() / 7
 
-    return dhw
+    # drop the lead-in days
+    return dhw.sel(time=slice(first, None))
 
 # caching wrappers
 def load_or_compute_climatology(region_name: str) -> dict:
-    """Load pre-computed climatology from zarr cache or compute fresh.
-
-    Returns dict with keys: sst_threshold, monthly_mean, mmm.
-    """
+    """Cached climatology dict: sst_threshold, monthly_mean, mmm."""
     path = get_climatology_path(region_name)
-    if os.path.exists(path):
-        ds = xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)
+    params = _climatology_params()
+    ds = _open_valid_cache(path, params)
+    if ds is not None:
         return {
             "sst_threshold": ds["sst_threshold"],
             "monthly_mean": ds["monthly_mean"],
             "mmm": ds["mmm"],
         }
-    else:
-        result = compute_climatology(region_name)
-        xr.Dataset({
-            "sst_threshold": result["sst_threshold"],
-            "monthly_mean": result["monthly_mean"],
-            "mmm": result["mmm"],
-        }).chunk("auto").to_zarr(path, zarr_format=ZARR_FORMAT)
-        zarr.consolidate_metadata(path)
-        return result
+    result = compute_climatology(region_name)
+    _write_cache(xr.Dataset({
+        "sst_threshold": result["sst_threshold"],
+        "monthly_mean": result["monthly_mean"],
+        "mmm": result["mmm"],
+    }), path, params)
+    return result
 
 def load_or_compute_mhw(sst: xr.DataArray, region_name: str, start: str, end: str) -> dict:
-    """Load pre-computed MHW results from zarr cache or compute fresh."""
+    """Cached compute_mhw()."""
     path = get_mhw_path(region_name, start, end)
-    if os.path.exists(path):
-        ds = xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)
+    params = _mhw_params()
+    ds = _open_valid_cache(path, params)
+    if ds is not None:
         return {
             "mhw": ds["mhw"],
             "exceedance": ds["exceedance"],
         }
-    else:
-        result = compute_mhw(sst, region_name)
-        xr.Dataset({
-            "mhw": result["mhw"],
-            "exceedance": result["exceedance"],
-        }).chunk("auto").to_zarr(path, zarr_format=ZARR_FORMAT)
-        zarr.consolidate_metadata(path)
-        return result
+    result = compute_mhw(sst, region_name)
+    _write_cache(xr.Dataset({
+        "mhw": result["mhw"],
+        "exceedance": result["exceedance"],
+    }), path, params)
+    return result
 
 def load_or_compute_dhw(sst: xr.DataArray, region_name: str, start: str, end: str) -> xr.DataArray:
-    """Load pre-computed DHW results from zarr cache or compute fresh."""
+    """Cached compute_dhw()."""
     path = get_dhw_path(region_name, start, end)
-    if os.path.exists(path):
-        return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
-    else:
-        dhw = compute_dhw(sst, region_name)
-        dhw.to_dataset(name="dhw").chunk("auto").to_zarr(path, zarr_format=ZARR_FORMAT)
-        zarr.consolidate_metadata(path)
-        return dhw
+    params = _dhw_params()
+    ds = _open_valid_cache(path, params)
+    if ds is not None:
+        return ds["dhw"]
+    dhw = compute_dhw(sst, region_name)
+    _write_cache(dhw.to_dataset(name="dhw"), path, params)
+    return dhw
 
 # TODO: add MHW event counting (n_events, mean_duration) per pixel
 # Challenge: apply_ufunc with vectorize=True is slow for large grids
