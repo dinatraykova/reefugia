@@ -1,5 +1,6 @@
 import xarray as xr
 import numpy as np
+import calendar
 import pandas as pd
 import warnings
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
@@ -7,12 +8,7 @@ warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 from reefugia.constants import KELVIN_TO_CELSIUS
 
 def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
-    """Summarise MHW statistics across the region.
-
-    Args:
-        mhw_days:   number of MHW days per pixel (latitude, longitude)
-        ocean_mask: boolean DataArray marking ocean pixels as True, land as False.
-    """
+    """Ocean-only summary stats of MHW days per pixel."""
 
     max_idx = mhw_days.where(ocean_mask).argmax(dim=["latitude", "longitude"])
     mhw_counts = mhw_days.where(ocean_mask).values.flatten()
@@ -29,11 +25,7 @@ def summarise_mhw(mhw_days: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
     }
 
 def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
-    """Summarise DHW statistics across the region.
-
-    Args:
-        dhw:        Degree Heating Weeks DataArray (time, latitude, longitude)
-        ocean_mask: boolean DataArray marking ocean pixels as True, land as False."""
+    """Ocean-only summary stats of peak DHW per pixel."""
 
     dhw_max = dhw.max(dim='time')
     max_idx = dhw_max.where(ocean_mask).argmax(dim=["latitude","longitude"])
@@ -51,14 +43,7 @@ def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
         }
 
 def monthly_sst_anomaly(sst: xr.DataArray, monthly_climatology: xr.DataArray, ocean_mask: xr.DataArray) -> pd.DataFrame:
-    """Compare monthly mean SST against 30-year climatological baseline.
-
-    Args:
-        sst:                  SST DataArray for analysis period
-        monthly_climatology:  monthly mean SST from 1991-2020 baseline (month, lat, lon)
-        ocean_mask:           boolean DataArray marking ocean pixels as True
-    """
-    import calendar
+    """Monthly regional mean SST vs the 1991–2020 climatology (°C)."""
 
     # spatial mean over ocean pixels for each month in analysis period
     sst_monthly = (sst.where(ocean_mask)

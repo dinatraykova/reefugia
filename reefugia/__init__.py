@@ -1,9 +1,4 @@
-"""
-reefugia — coral bleaching thermal stress analysis.
-
-Typical usage:
-    from reefugia import fetch, detect, analyse, visualise
-"""
+"""reefugia — coral bleaching thermal stress analysis."""
 
 from reefugia import fetch, detect, analyse, visualise
 

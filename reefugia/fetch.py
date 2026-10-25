@@ -35,13 +35,13 @@ REGIONS = {
 }
 
 def get_region(region_name: str) -> dict:
-    """Return bounding box coordinates for a named region."""
+    """Bounding box for a named region."""
     if region_name not in REGIONS:
         raise ValueError(f"Unknown region '{region_name}'. Available regions: {list(REGIONS.keys())}")
     return REGIONS[region_name]
 
 def fetch_data(region_name: str, start: str, end: str):
-    """Fetch the sea surface temperature data from Copernicus Marine Service."""
+    """Copernicus SST for a region and date range (in Kelvin)."""
 
     region = get_region(region_name)
 

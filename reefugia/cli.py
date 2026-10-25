@@ -3,13 +3,12 @@ import json
 import os
 import time
 
-# third party
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend — no popups during CLI run
 import matplotlib.pyplot as plt
 import click
 
-# local
+# internal
 from reefugia import fetch, detect, analyse, visualise
 from reefugia.constants import ANALYSIS_START, ANALYSIS_END
 
@@ -26,7 +25,7 @@ def main(region, start, end):
     sst = ds["analysed_sst"]
     ocean_mask = ~sst.isel(time=0).isnull().compute()
 
-    # ── MHW ───────────────────────────────────────────────────────────────────
+    # MHW 
     mhw = detect.load_or_compute_mhw(sst, region, start, end)
     mhw_days = mhw["mhw"].sum(dim="time").compute()
     mhw_summary = analyse.summarise_mhw(mhw_days, ocean_mask)
@@ -37,7 +36,7 @@ def main(region, start, end):
     click.echo(f"Max MHW days:      {mhw_summary['max_days']:.0f}")
     click.echo(f"% ocean affected:  {mhw_summary['pct_affected']:.1f}%")
 
-    # ── DHW ───────────────────────────────────────────────────────────────────
+    # DHW 
     dhw = detect.load_or_compute_dhw(sst, region, start, end)
     dhw_summary = analyse.summarise_dhw(dhw, ocean_mask)
 
@@ -47,13 +46,13 @@ def main(region, start, end):
     click.echo(f"% above 4 DHW:  {dhw_summary['pct_above_4']:.1f}%")
     click.echo(f"% above 8 DHW:  {dhw_summary['pct_above_8']:.1f}%")
 
-    # ── Monthly SST anomaly ────────────────────────────────────────────────────
+    # Monthly SST anomaly 
     click.echo("\n── Monthly SST Anomaly ──────────")
     climatology = detect.load_or_compute_climatology(region)
     anomaly = analyse.monthly_sst_anomaly(sst, climatology["monthly_mean"], ocean_mask)
     click.echo(anomaly.to_string())
 
-    # ── Save data ─────────────────────────────────────────────────────────────
+    # Save data 
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.join(repo_root, "outputs")
     os.makedirs(output_dir, exist_ok=True)
@@ -71,7 +70,7 @@ def main(region, start, end):
 
     click.echo(f"\nData saved to {output_dir}/")
 
-    # ── Spatial maps ──────────────────────────────────────────────────────────
+    # Plots 
     click.echo("\n── Generating plots ─────────────")
 
     fig = visualise.plot_mhw_days(
@@ -98,13 +97,11 @@ def main(region, start, end):
     fig = visualise.plot_sst_anomaly_max(
         sst,
         climatology,
-        title=f"Max SST anomaly {start[:4]} — {region}"
+        title=f"Max monthly SST anomaly {start[:4]} — {region}"
     )
     fig.savefig(os.path.join(output_dir, f"sst_anomaly_max_{region}_{start}_{end}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
-
-    # ── Diagnostic plots ──────────────────────────────────────────────────────
 
     fig = visualise.plot_monthly_matrix(
         dhw,
@@ -117,7 +114,7 @@ def main(region, start, end):
 
     click.echo(f"Plots saved to {output_dir}/")
 
-    # ── Animation ─────────────────────────────────────────────────────────────
+    # Animation 
     click.echo("\n── Generating DHW animation ─────")
     anim = visualise.plot_dhw_animation(dhw, title=f"DHW — {region}")
     anim.save(
