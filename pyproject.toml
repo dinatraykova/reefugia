@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reefugia"
+version = "0.1.0"
+description = "Marine heatwave and coral bleaching thermal stress detection from Copernicus Marine Service data"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Dina Traykova", email = "dina.traykova@gmail.com" }]
+keywords = ["oceanography", "marine-heatwave", "coral-bleaching", "copernicus", "xarray"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Intended Audience :: Science/Research",
+]
+
+dependencies = [
+    # data access
+    "copernicusmarine>=2.5",        # fetch.py — Copernicus SST
+    "pydap>=3.5",                   # trend.py — OPeNDAP engine for NOAA CRW
+    # gridded data handling
+    "xarray>=2025.1",
+    "dask>=2024.1",                 # lazy/chunked computation in detect.py, trend.py
+    "zarr>=3.0",                    # climatology / MHW / DHW caches
+    "h5netcdf>=1.4",                # to_netcdf backend in cli.py
+    # analysis
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",            # trend.py — polynomial DHW forecast
+    # plotting
+    "matplotlib>=3.9",
+    "cartopy>=0.24",
+    # CLI
+    "click>=8.1",
+    "imageio-ffmpeg>=0.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",                    # run notebooks/ with this environment
+    "pytest",                       # tests/
+]
+
+[project.urls]
+Homepage = "https://github.com/dinatraykova/reefugia"
+
+[project.scripts]
+reefugia = "reefugia.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["reefugia*"]
+
+[tool.uv]
+# pyproj 3.8+ has no Intel-Mac wheels for macOS < 15; keep 3.7.x there so it isn't built from source
+constraint-dependencies = [
+    "pyproj<3.8; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "shapely<2.2",
+]
