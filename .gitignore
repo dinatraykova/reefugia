@@ -3,6 +3,10 @@
 
 # Virtual environment
 venv/
+.venv/
+
+# Build metadata
+*.egg-info/
 
 # Output dir
 outputs/

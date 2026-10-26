@@ -81,25 +81,35 @@ Coral Triangle experienced severe thermal stress during this period,
 making it an ideal test case for reefugia's detection pipeline.
 
 ## Installation
+reefugia uses [uv](https://docs.astral.sh/uv/) to manage Python and dependencies.
+
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, once
 git clone https://github.com/dinatraykova/reefugia
 cd reefugia
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+uv sync
+```
+
+`uv sync` downloads a suitable Python if needed, creates a `.venv/` virtual
+environment, and installs reefugia (in editable mode) with the exact
+dependency versions recorded in `uv.lock`, plus the dev tools (`ipykernel`,
+`pytest`). Run it again whenever `pyproject.toml` changes.
+
+Prefer plain pip? This works too, but ignores `uv.lock`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
 ### Jupyter notebooks
-
-To use the notebooks with the correct environment:
+`ipykernel` is installed by `uv sync`. In VS Code, open a notebook and pick
+the `.venv` interpreter as the kernel. To use Jupyter in the browser instead:
 
 ```bash
-pip install ipykernel
-python -m ipykernel install --user --name=reefugia --display-name="reefugia"
-jupyter notebook
+uv run --with jupyter jupyter lab
 ```
-
-Then select the **reefugia** kernel in the top right of the notebook.
 
 ## Credentials
 reefugia requires a free Copernicus Marine Service account.
@@ -113,5 +123,8 @@ This stores your credentials locally and only needs to be done once.
 
 ## Usage
 ```bash
-python -m reefugia.cli --region coral_triangle --start 2023-01-01 --end 2023-09-01
+uv run reefugia --region coral_triangle --start 2023-01-01 --end 2023-09-01
 ```
+
+`uv run` uses the project environment without activating it. With `.venv`
+activated, plain `reefugia ...` (or `python -m reefugia.cli ...`) works the same.
