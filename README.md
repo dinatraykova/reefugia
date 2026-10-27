@@ -14,15 +14,14 @@ environmental stress) is a simple, open-source pipeline for detecting and
 analysing thermal stress events using public satellite and reanalysis data.
 
 ## Data Sources 🌊
-All data is sourced from the [Copernicus Marine Service](https://marine.copernicus.eu/), 
-which provides free, open access to ocean data with no quotas.
+Sea surface temperature comes from the [Copernicus Marine Service](https://marine.copernicus.eu/), 
+which provides free, open access to ocean data with no quotas. NOAA Coral Reef Watch
+DHW is used as an independent reference to validate reefugia's DHW.
 
 | Variable | Dataset | Resolution |
 |---|---|---|
-| Sea Surface Temperature (SST) | Global Ocean SST | 0.05° |
-| Ocean Currents | Global Ocean Physics | 0.083° |
-| Mixed Layer Depth | Global Ocean Physics | 0.083° |
-| Heat Content | Global Ocean Heat Content | 0.25° |
+| Sea Surface Temperature (SST) | Copernicus `C3S-GLO-SST-L4-REP-OBS-SST` | 0.05°, daily |
+| Degree Heating Weeks (reference) | [NOAA Coral Reef Watch](https://coralreefwatch.noaa.gov/product/5km/) DHW via ERDDAP | 0.05°, daily |
 
 ### Key Metric: Degree Heating Weeks (DHW)
 reefugia implements the [NOAA Coral Reef Watch](https://coralreefwatch.noaa.gov/main/)
@@ -40,6 +39,8 @@ stress above the local maximum monthly mean temperature.
 - Hobday et al. (2016) — A hierarchical approach to defining marine heatwaves. 
   *Progress in Oceanography*, 141, 227-238. 
   DOI: [10.1016/j.pocean.2015.12.014](https://doi.org/10.1016/j.pocean.2015.12.014)
+- NOAA Coral Reef Watch — [Methodology for the 5 km daily products](https://coralreefwatch.noaa.gov/product/5km/methodology.php)
+  (HotSpot and Degree Heating Week definitions)
 
 ## Pipeline
 
@@ -48,13 +49,21 @@ reefugia computes the following from raw SST:
 1. **Climatology** — 90th percentile SST threshold for each day of year, smoothed
    with an 11-day rolling window (Hobday et al. 2016), computed over the 1991–2020
    WMO baseline period
-2. **Marine Heatwave (MHW) detection** — days exceeding the climatological threshold
-   for at least 5 consecutive days
-3. **Degree Heating Weeks (DHW)** — accumulated heat stress above the bleaching
-   threshold (MMM + 1°C) over a 12-week rolling window, following NOAA CRW methodology
+2. **Marine Heatwave (MHW) detection** — runs of at least 5 consecutive days above
+   the climatological threshold, with every day of the run counted. Events separated
+   by short gaps are not merged, unlike the full Hobday et al. (2016) definition
+3. **Degree Heating Weeks (DHW)** — following NOAA CRW, the daily HotSpot is SST minus
+   the maximum monthly mean (MMM) from the 1991–2020 baseline. HotSpots of at least
+   1 °C count in full, smaller ones count as zero, and DHW is their sum over a 12-week
+   rolling window divided by 7
 
-All intermediate products (climatology, MHW, DHW) are cached as Zarr stores so
-subsequent runs are fast.
+MHW and DHW use SST from before the start date as a lead-in, so the rolling windows
+are full from the first day of the analysis period.
+
+All intermediate products (climatology, MHW, DHW) are cached as Zarr stores in `data/`
+so subsequent runs are fast. A cache is recomputed automatically when the settings in
+`reefugia/constants.py` or the CLI input dates or region change, but not when the code 
+changes, so delete the relevant `data/*.zarr` after changing a calculation.
 
 ## Outputs
 
@@ -70,9 +79,25 @@ For each run, reefugia saves to `outputs/`:
 **Plots**
 - `mhw_days_{region}_{start}_{end}.png` — spatial map of MHW days with hotspot
 - `dhw_{region}_{start}_{end}.png` — spatial map of max DHW with hotspot
-- `sst_anomaly_max_{region}_{start}_{end}.png` — spatial map of max SST anomaly
+- `sst_anomaly_max_{region}_{start}_{end}.png` — spatial map of the largest monthly
+  SST anomaly relative to the 1991–2020 monthly mean
 - `monthly_matrix_dhw_{region}_{start}_{end}.png` — monthly DHW bar chart (single year) or matrix (multi-year)
 - `dhw_animation_{region}_{start}_{end}.mp4` — daily DHW animation
+
+## Validation
+`notebooks/nb03_validate_dhw.ipynb` compares reefugia's DHW for one region and year
+with NOAA Coral Reef Watch. It maps the difference in peak DHW per pixel and reports
+the spatial and temporal correlation, mean bias and RMSE. Some offset is expected,
+since NOAA uses different SST (CoralTemp) and an older, cooler MMM baseline, which
+gives larger HotSpots.
+
+## Tests
+Unit tests run the MHW and DHW calculations on small synthetic SST series, with no
+network access or cached data needed.
+
+```bash
+uv run pytest
+```
 
 ## Default Analysis Period
 The default time range (2023-01-01 to 2023-12-31) corresponds to the 
@@ -93,9 +118,9 @@ uv sync
 `uv sync` downloads a suitable Python if needed, creates a `.venv/` virtual
 environment, and installs reefugia (in editable mode) with the exact
 dependency versions recorded in `uv.lock`, plus the dev tools (`ipykernel`,
-`pytest`). Run it again whenever `pyproject.toml` changes.
+`jupyterlab`, `pytest`). Run it again whenever `pyproject.toml` changes.
 
-Prefer plain pip? This works too, but ignores `uv.lock`:
+Or with pip:
 
 ```bash
 python -m venv .venv
@@ -104,12 +129,13 @@ pip install -e .
 ```
 
 ### Jupyter notebooks
-`ipykernel` is installed by `uv sync`. In VS Code, open a notebook and pick
-the `.venv` interpreter as the kernel. To use Jupyter in the browser instead:
+Jupyter is installed by `uv sync`. To open the notebooks in the browser:
 
 ```bash
-uv run --with jupyter jupyter lab
+uv run jupyter lab
 ```
+
+In VS Code, open a notebook and pick the `.venv` interpreter as the kernel.
 
 ## Credentials
 reefugia requires a free Copernicus Marine Service account.
