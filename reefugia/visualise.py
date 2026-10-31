@@ -5,6 +5,9 @@ import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.animation as animation
+import imageio_ffmpeg
+import matplotlib as mpl
+mpl.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
 
 def plot_mhw_days(mhw_days: xr.DataArray,
                   hotspot_lat: float,
@@ -34,7 +37,7 @@ def plot_mhw_days(mhw_days: xr.DataArray,
             linestyle="none",
             transform=ccrs.PlateCarree(),
             label=f"Hotspot ({int(mhw_days.max().values)} days)")
-    ax.legend()
+    ax.legend(loc="upper right")
 
     if title is None:
         title = "MHW days"
@@ -80,7 +83,7 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
             transform=ccrs.PlateCarree(),
             label=f"Hotspot ({float(sst_anomaly_max.max().values):.1f} °C) \nMonth: {hotspot_month}"
     )
-    ax.legend()
+    ax.legend(loc="upper right")
     plt.tight_layout()
 
     if title is None:
@@ -100,14 +103,14 @@ def plot_dhw(dhw: xr.DataArray,
 
     fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
                        subplot_kw={"projection": ccrs.PlateCarree()})
-    _create_dhw_mesh(dhw_max, ax)
+    _create_dhw_mesh(dhw_max, ax, max_dhw)
 
     ax.plot(hotspot_lon, hotspot_lat,
             marker="*", color="blue", markersize=10,
             linestyle="none", transform=ccrs.PlateCarree(),
             label=f"Max DHW ({max_dhw:.1f} °C-weeks) \nDate: {dhw_max_date}"
     )
-    ax.legend()
+    ax.legend(loc="upper right")
     plt.tight_layout()
 
     if title is None:
@@ -116,13 +119,14 @@ def plot_dhw(dhw: xr.DataArray,
     return fig
 
 def plot_dhw_animation(dhw: xr.DataArray,
+                       max_dhw: float,
                        title: str = None) -> animation.FuncAnimation:
 
     dhw_computed = dhw.compute()
 
     fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
                            subplot_kw={"projection": ccrs.PlateCarree()})
-    mesh = _create_dhw_mesh(dhw_computed.isel(time=0), ax)
+    mesh = _create_dhw_mesh(dhw_computed.isel(time=0), ax, max_dhw)
     date_title = ax.set_title(f"{title or 'DHW'} — {str(dhw.time[0].values)[:10]}")
     plt.tight_layout()
 
@@ -173,7 +177,7 @@ def plot_monthly_matrix(da: xr.DataArray,
         ax.set_yticklabels(month_labels)
         ax.set_xlabel(label)
         ax.set_title(title or f"Monthly DHW — {year}")
-        ax.legend()
+        ax.legend(loc="upper right")
 
     else:
         fig, axes = plt.subplots(1, 2, figsize=(14, 8), dpi=100)
@@ -194,12 +198,9 @@ def plot_monthly_matrix(da: xr.DataArray,
     return fig
 
 def plot_trend(trend: dict,
-               forecast_years: list[int] = None,
                region_name: str = "",
                title: str = None) -> plt.Figure:
-    """Annual max DHW with fitted trend and optional forecast."""
-    from reefugia.trend import forecast_dhw
-
+    """Annual max DHW with fitted trend."""
     years  = trend["years"]
     values = trend["values"]
     y_fit  = trend["y_fit"]
@@ -216,26 +217,6 @@ def plot_trend(trend: dict,
     ax.plot(years, y_fit, color="#c0392b", linewidth=2,
             label=f"{degree_label} fit  (R²={r2:.2f})")
 
-    # forecast
-    if forecast_years:
-        fc_values = forecast_dhw(trend, forecast_years)
-        fc_years  = np.array(forecast_years, dtype=float)
-
-        # extrapolation uncertainty band — widen linearly with distance
-        last_year = years[-1]
-        residuals = values[~np.isnan(values)] - y_fit[~np.isnan(y_fit)]
-        sigma = np.std(residuals)
-        spread = sigma * (1 + (fc_years - last_year) / 10)
-
-        ax.plot(fc_years, fc_values, color="#c0392b", linewidth=1.5,
-                linestyle="--", label="Forecast")
-        ax.fill_between(fc_years,
-                        fc_values - spread,
-                        fc_values + spread,
-                        color="#c0392b", alpha=0.12, label="±1σ envelope")
-        # vertical divider
-        ax.axvline(last_year + 0.5, color="grey", linewidth=0.8, linestyle=":")
-
     # bleaching threshold reference
     ax.axhline(4, color="#e67e22", linewidth=1, linestyle="--", alpha=0.7,
                label="Bleaching threshold (4 °C-weeks)")
@@ -243,8 +224,8 @@ def plot_trend(trend: dict,
     ax.set_xlabel("Year")
     ax.set_ylabel("DHW (°C-weeks)")
     ax.set_title(title or f"Annual max DHW trend — {region_name}")
-    ax.legend(fontsize=9, framealpha=0.7)
-    ax.set_xlim(years[0] - 1, (forecast_years or [years[-1]])[-1] + 1)
+    ax.legend(fontsize=9, framealpha=0.7, loc="upper right")
+    ax.set_xlim(years[0] - 1, years[-1] + 1)
     ax.set_ylim(bottom=0)
 
     plt.tight_layout()
@@ -282,10 +263,32 @@ def plot_trend_map(slope_da: xr.DataArray,
     plt.tight_layout()
     return fig
 
-def _create_dhw_mesh(dhw_2d: xr.DataArray, ax) -> object:
+def plot_dhw_difference(diff: xr.DataArray,
+                        r_spatial: float,
+                        title: str = None,
+                        land_color: str = "#c8c8c8") -> plt.Figure:
+    """Map of peak DHW minus reference peak DHW (e.g. NOAA CRW), from compare_dhw()."""
+    vmax = float(np.nanpercentile(np.abs(diff.values), 98))
+
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=100,
+                           subplot_kw={"projection": ccrs.PlateCarree()})
+    mesh = ax.pcolormesh(diff.longitude, diff.latitude, diff.values,
+                         cmap="RdBu_r", vmin=-vmax, vmax=vmax,
+                         shading="nearest", transform=ccrs.PlateCarree())
+    ax.add_feature(cfeature.LAND, facecolor=land_color, zorder=2)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.5, zorder=3)
+    plt.colorbar(mesh, ax=ax, label="Peak DHW difference (°C-weeks)", pad=0.04)
+
+    ax.text(0.97, 0.97, f"spatial r = {r_spatial:.2f}", transform=ax.transAxes,
+            ha="right", va="top", bbox=dict(facecolor="white", alpha=0.8, edgecolor="none"))
+    ax.set_title(title or "Peak DHW: reefugia − NOAA CRW")
+    plt.tight_layout()
+    return fig
+
+def _create_dhw_mesh(dhw_2d: xr.DataArray, ax, max_dhw: float) -> object:
     # vmax covers full NOAA bleaching alert scale (Alert 1-4: 4, 8, 12, 16°C-weeks)
     # scales up if data exceeds 16, capped at 20 (near complete mortality threshold)
-    vmax = min(max(16, float(dhw_2d.max().values) * 1.1), 20)
+    vmax = min(max(16, max_dhw * 1.1), 20)
 
     # custom colormap with bleaching threshold bands
     bounds = [0, 4, 8, 12, 16]

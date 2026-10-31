@@ -116,11 +116,16 @@ def main(region, start, end):
 
     # Animation 
     click.echo("\n── Generating DHW animation ─────")
-    anim = visualise.plot_dhw_animation(dhw, title=f"DHW — {region}")
+    anim = visualise.plot_dhw_animation(
+        dhw,
+        max_dhw=dhw_summary["max_dhw"],
+        title=f"DHW — {region}"
+    )
     anim.save(
         os.path.join(output_dir, f"dhw_animation_{region}_{start}_{end}.mp4"),
         writer="ffmpeg",
-        fps=10
+        fps=10,
+        dpi = 80
     )
     plt.close()
     click.echo("Animation saved!")

@@ -98,7 +98,7 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
     """MHW exceedance and persistence masks from ds["analysed_sst"]."""
     sst_threshold = load_or_compute_climatology(region_name)["sst_threshold"]
 
-    # lead-in so rolling windows are full from the first day
+    # add lead-in so rolling windows are full from the first day
     first = sst.time.values[0]
     sst = _with_lead_in(sst, region_name, MHW_PERSISTENCE_DAYS - 1)
 

@@ -16,7 +16,8 @@ CRW_URL = "https://coastwatch.pfeg.noaa.gov/erddap/griddap/NOAA_DHW"
 
 # ── Data access ──────────────────────────────────────────────────────────────
 
-def fetch_crw_dhw(region_name: str, start_year: int = 1985, end_year: int = 2025) -> xr.DataArray:
+def fetch_crw_dhw(region_name: str, start_year: int = 1986, end_year: int = 2025) -> xr.DataArray:
+    """Lazy daily NOAA CRW DHW for a region (record starts 1985-04-01, so 1986 is the first full year)."""
     bounds = get_region(region_name)
     ds = xr.open_dataset(CRW_URL, engine="pydap", chunks={"time": 30})
 
@@ -27,7 +28,7 @@ def fetch_crw_dhw(region_name: str, start_year: int = 1985, end_year: int = 2025
     else:
         lat_slice = slice(bounds["min_lat"], bounds["max_lat"])
 
-    dhw = ds["degree_heating_week"].sel(
+    dhw = ds["CRW_DHW"].sel(
         time=slice(f"{start_year}-01-01", f"{end_year}-12-31"),
         latitude=lat_slice,
         longitude=slice(bounds["min_lon"], bounds["max_lon"]),
@@ -38,18 +39,19 @@ def fetch_crw_dhw(region_name: str, start_year: int = 1985, end_year: int = 2025
 def _crw_path(region_name: str, start_year: int, end_year: int) -> str:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(repo_root, "data",
-                        f"crw_dhw_{region_name}_{start_year}_{end_year}.zarr")
+                        f"crw_dhw_annual_max_{region_name}_{start_year}_{end_year}.zarr")
 
 
-def load_or_fetch_crw(region_name: str, start_year: int = 1985,
-                      end_year: int = 2025) -> xr.DataArray:
-    """Cached NOAA CRW DHW for a region."""
+def load_or_fetch_crw_annual_max(region_name: str, start_year: int = 1986,
+                                 end_year: int = 2025) -> xr.DataArray:
+    """Cached annual max NOAA CRW DHW per pixel (dims: year, latitude, longitude)."""
     import zarr
     path = _crw_path(region_name, start_year, end_year)
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
-    dhw = fetch_crw_dhw(region_name, start_year, end_year).compute()
-    dhw.to_dataset(name="dhw").chunk("auto").to_zarr(path, zarr_format=ZARR_FORMAT)
+    # reduce lazily so only one year per pixel is held in memory, not the daily record
+    dhw = annual_max_dhw(fetch_crw_dhw(region_name, start_year, end_year)).compute()
+    dhw.to_dataset(name="dhw").to_zarr(path, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(path)
     return dhw
 
@@ -92,12 +94,6 @@ def fit_trend(da_annual: xr.DataArray, degree: int = 1) -> dict:
         "r2": r2_score(y, pipeline.predict(X)),
         "model": pipeline,
     }
-
-
-def forecast_dhw(trend: dict, forecast_years: list[int]) -> np.ndarray:
-    """Extrapolate a fit_trend() result to future years."""
-    X_future = np.array(forecast_years, dtype=float).reshape(-1, 1)
-    return trend["model"].predict(X_future)
 
 
 # ── Pixel-level trend map ─────────────────────────────────────────────────────
