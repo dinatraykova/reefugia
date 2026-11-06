@@ -72,12 +72,14 @@ def main(region, start, end):
 
     # Plots 
     click.echo("\n── Generating plots ─────────────")
+    place = visualise.pretty_region(region)
+    year = start[:4] if start[:4] == end[:4] else f"{start[:4]}–{end[:4]}"
 
     fig = visualise.plot_mhw_days(
         mhw_days,
         hotspot_lat=mhw_summary["hotspot_lat"],
         hotspot_lon=mhw_summary["hotspot_lon"],
-        title=f"MHW days {start[:4]} — {region}"
+        title=f"Marine heatwave days, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
@@ -88,7 +90,7 @@ def main(region, start, end):
         hotspot_lat=dhw_summary["hotspot_lat"],
         hotspot_lon=dhw_summary["hotspot_lon"],
         max_dhw=dhw_summary["max_dhw"],
-        title=f"Max DHW {start[:4]} — {region}"
+        title=f"Peak Degree Heating Weeks, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
@@ -97,7 +99,7 @@ def main(region, start, end):
     fig = visualise.plot_sst_anomaly_max(
         sst,
         climatology,
-        title=f"Max monthly SST anomaly {start[:4]} — {region}"
+        title=f"Largest monthly SST anomaly, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"sst_anomaly_max_{region}_{start}_{end}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
@@ -106,7 +108,7 @@ def main(region, start, end):
     fig = visualise.plot_monthly_matrix(
         dhw,
         label="DHW (°C-weeks)",
-        title=f"DHW by month — {region} {start[:4]}"
+        title=f"DHW by month, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"monthly_matrix_dhw_{region}_{start}_{end}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
@@ -116,11 +118,7 @@ def main(region, start, end):
 
     # Animation 
     click.echo("\n── Generating DHW animation ─────")
-    anim = visualise.plot_dhw_animation(
-        dhw,
-        max_dhw=dhw_summary["max_dhw"],
-        title=f"DHW — {region}"
-    )
+    anim = visualise.plot_dhw_animation(dhw, title=f"DHW — {place}")
     anim.save(
         os.path.join(output_dir, f"dhw_animation_{region}_{start}_{end}.mp4"),
         writer="ffmpeg",
