@@ -1,5 +1,7 @@
 import os
+import warnings
 import zarr
+import numpy as np
 import pandas as pd
 import xarray as xr
 
@@ -7,8 +9,10 @@ from reefugia import fetch
 from reefugia.constants import BASELINE_START, BASELINE_END
 from reefugia.constants import (
     CLIMATOLOGY_PERCENTILE,
+    CLIMATOLOGY_WINDOW_HALF_WIDTH_DAYS,
     CLIMATOLOGY_SMOOTHING_WINDOW_DAYS,
     MHW_PERSISTENCE_DAYS,
+    MHW_MAX_GAP_DAYS,
     BLEACHING_THRESHOLD_OFFSET,
     DHW_WINDOW_DAYS,
     ZARR_FORMAT,
@@ -35,11 +39,14 @@ def _climatology_params() -> dict:
         "baseline_start": BASELINE_START,
         "baseline_end": BASELINE_END,
         "climatology_percentile": CLIMATOLOGY_PERCENTILE,
+        "climatology_window_half_width_days": CLIMATOLOGY_WINDOW_HALF_WIDTH_DAYS,
         "climatology_smoothing_window_days": CLIMATOLOGY_SMOOTHING_WINDOW_DAYS,
     }
 
 def _mhw_params() -> dict:
-    return {**_climatology_params(), "mhw_persistence_days": MHW_PERSISTENCE_DAYS}
+    return {**_climatology_params(),
+            "mhw_persistence_days": MHW_PERSISTENCE_DAYS,
+            "mhw_max_gap_days": MHW_MAX_GAP_DAYS}
 
 def _dhw_params() -> dict:
     return {
@@ -74,16 +81,72 @@ def _with_lead_in(sst: xr.DataArray, region_name: str, days: int) -> xr.DataArra
     )["analysed_sst"]
     return xr.concat([lead, sst], dim="time")
 
+def _join_gaps(mhw: xr.DataArray, max_gap: int) -> xr.DataArray:
+    # a non-MHW day is in a gap of <= max_gap days if there's an MHW day i days
+    # before and j days after it with i + j - 1 <= max_gap
+    gap = xr.zeros_like(mhw, dtype=bool)
+    for i in range(1, max_gap + 1):
+        before = mhw.shift(time=i, fill_value=False)
+        for j in range(1, max_gap + 2 - i):
+            gap = gap | (before & mhw.shift(time=-j, fill_value=False))
+    return mhw | gap
+
+def day_of_year(time) -> np.ndarray:
+    """Day of year on a leap-year calendar (1–366, Feb 29 = 60, Mar 1 = 61 every year)."""
+    t = pd.DatetimeIndex(np.asarray(time))
+    late_non_leap = ~t.is_leap_year & (t.month >= 3)
+    return t.day_of_year.to_numpy() + late_non_leap.astype(int)
+
+
+def _hobday_threshold(values: np.ndarray, doy: np.ndarray, percentile: float,
+                      half_width: int, smoothing: int) -> np.ndarray:
+    # values (..., time) → threshold (..., 366), following marineHeatWaves.detect
+    n_time = values.shape[-1]
+    offsets = np.arange(-half_width, half_width + 1)
+    out = np.full(values.shape[:-1] + (366,), np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN land pixels
+        for d in range(1, 367):
+            if d == 60:
+                continue
+            centres = np.flatnonzero(doy == d)
+            idx = (centres[:, None] + offsets).ravel()
+            idx = idx[(idx >= 0) & (idx < n_time)]
+            out[..., d - 1] = np.nanpercentile(values[..., idx], percentile * 100, axis=-1)
+    # Feb 29 occurs too rarely for its own percentile — interpolate its neighbours
+    out[..., 59] = 0.5 * (out[..., 58] + out[..., 60])
+
+    # circular running mean, so the threshold wraps smoothly from Dec into Jan
+    h = smoothing // 2
+    padded = np.concatenate([out[..., -h:], out, out[..., :h]], axis=-1)
+    csum = np.cumsum(np.concatenate([np.zeros_like(padded[..., :1]), padded], axis=-1), axis=-1)
+    return (csum[..., smoothing:] - csum[..., :-smoothing]) / smoothing
+
+
+def compute_threshold(sst: xr.DataArray) -> xr.DataArray:
+    """Hobday et al. (2016) MHW threshold per day of year (1–366) from baseline SST."""
+    threshold = xr.apply_ufunc(
+        _hobday_threshold,
+        sst.chunk({"time": -1, "latitude": 32, "longitude": 32}),
+        input_core_dims=[["time"]],
+        output_core_dims=[["dayofyear"]],
+        kwargs={"doy": day_of_year(sst.time.values),
+                "percentile": CLIMATOLOGY_PERCENTILE,
+                "half_width": CLIMATOLOGY_WINDOW_HALF_WIDTH_DAYS,
+                "smoothing": CLIMATOLOGY_SMOOTHING_WINDOW_DAYS},
+        dask="parallelized",
+        output_dtypes=[float],
+        dask_gufunc_kwargs={"output_sizes": {"dayofyear": 366}},
+    )
+    return threshold.assign_coords(dayofyear=np.arange(1, 367)).transpose("dayofyear", ...)
+
+
 # compute analysis diagnostics
 def compute_climatology(region_name: str) -> dict:
     historical = fetch.fetch_data(region_name, BASELINE_START, BASELINE_END)
     sst = historical["analysed_sst"]
 
-    # 90th percentile threshold, smoothed with 11-day rolling window
-    threshold = sst.groupby("time.dayofyear").quantile(CLIMATOLOGY_PERCENTILE)
-    threshold = threshold.rolling(
-        dayofyear=CLIMATOLOGY_SMOOTHING_WINDOW_DAYS, center=True, min_periods=1
-    ).mean()
+    threshold = compute_threshold(sst)
 
     monthly_mean = sst.groupby("time.month").mean()
     mmm = monthly_mean.max(dim="month")
@@ -98,12 +161,13 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
     """MHW exceedance and persistence masks from ds["analysed_sst"]."""
     sst_threshold = load_or_compute_climatology(region_name)["sst_threshold"]
 
-    # add lead-in so rolling windows are full from the first day
+    # add lead-in so rolling windows are full from the first day, and an event
+    # ending just before it can still be joined across a short gap
     first = sst.time.values[0]
-    sst = _with_lead_in(sst, region_name, MHW_PERSISTENCE_DAYS - 1)
+    sst = _with_lead_in(sst, region_name, MHW_PERSISTENCE_DAYS - 1 + MHW_MAX_GAP_DAYS)
 
-    doy = sst.time.dt.dayofyear
-    threshold = sst_threshold.sel(dayofyear=doy, method="nearest")
+    doy = xr.DataArray(day_of_year(sst.time.values), coords={"time": sst.time}, dims="time")
+    threshold = sst_threshold.sel(dayofyear=doy)
 
     is_over_threshold = sst > threshold
 
@@ -120,19 +184,27 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
                   .rolling(time=MHW_PERSISTENCE_DAYS, min_periods=1).max()
                   .isel(time=reverse)) > 0
 
+    mhw = _join_gaps(mhw, MHW_MAX_GAP_DAYS)
+
     # drop the lead-in days
     return {
         "exceedance": is_over_threshold.sel(time=slice(first, None)),
         "mhw": mhw.sel(time=slice(first, None)),
     }
 
-def compute_dhw(sst: xr.DataArray, region_name: str) -> xr.DataArray:
-    """Degree Heating Weeks (NOAA CRW method) from ds["analysed_sst"]."""
-    mmm = load_or_compute_climatology(region_name)["mmm"]
+def compute_dhw(sst: xr.DataArray, region_name: str, mmm: xr.DataArray = None,
+                lead_in: bool = True) -> xr.DataArray:
+    """Degree Heating Weeks (NOAA CRW method) from ds["analysed_sst"].
+    Uses the region's 1991–2020 MMM unless another MMM (in K, same grid) is given.
+    With lead_in=False no earlier SST is fetched, so pass SST that starts 83 days
+    before the dates you need (the first 83 days have incomplete windows)."""
+    if mmm is None:
+        mmm = load_or_compute_climatology(region_name)["mmm"]
 
     # lead-in so rolling windows are full from the first day
     first = sst.time.values[0]
-    sst = _with_lead_in(sst, region_name, DHW_WINDOW_DAYS - 1)
+    if lead_in:
+        sst = _with_lead_in(sst, region_name, DHW_WINDOW_DAYS - 1)
 
     # NOAA CRW: HotSpots >= 1°C count in full, smaller ones as 0 (NaN kept for land)
     hotspot = sst - mmm

@@ -252,6 +252,23 @@ def plot_dhw_difference(diff: xr.DataArray,
     return fig
 
 
+@_styled
+def plot_map(da: xr.DataArray,
+             label: str,
+             title: str = None,
+             cmap=HEAT_CMAP,
+             **kwargs) -> plt.Figure:
+    """Map of any 2D field (latitude, longitude) in the reefugia style.
+    Extra keyword arguments (e.g. vmin, vmax) go to pcolormesh."""
+    fig, ax = _map_axes(da)
+    mesh = ax.pcolormesh(da.longitude, da.latitude, da.values, cmap=cmap,
+                         shading="nearest", transform=ccrs.PlateCarree(), zorder=1, **kwargs)
+    _colorbar(fig, mesh, ax, label)
+    if title:
+        ax.set_title(title)
+    return fig
+
+
 # ── Charts ────────────────────────────────────────────────────────────────────
 
 @_styled
