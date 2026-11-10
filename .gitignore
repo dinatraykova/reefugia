@@ -24,3 +24,6 @@ data/
 
 # OS files
 .DS_Store
+# Scratch notebooks and local third-party code (marineHeatWaves is GPL-3)
+notebooks/archive/
+notebooks/validation/marineHeatWaves1.py
