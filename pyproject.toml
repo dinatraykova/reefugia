@@ -39,6 +39,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel",                    # run notebooks/ with this environment
+    "ipywidgets>=8.1.9",
     "jupyterlab>=4.6.4",
     "pytest",                       # tests/
 ]
