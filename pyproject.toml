@@ -52,6 +52,9 @@ reefugia = "reefugia.cli:main"
 [tool.setuptools.packages.find]
 include = ["reefugia*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.uv]
 # pyproj 3.8+ has no Intel-Mac wheels for macOS < 15; keep 3.7.x there so it isn't built from source
 constraint-dependencies = [

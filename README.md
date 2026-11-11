@@ -1,4 +1,7 @@
 # reefugia 🪸
+
+[![tests](https://github.com/dinatraykova/reefugia/actions/workflows/tests.yml/badge.svg)](https://github.com/dinatraykova/reefugia/actions/workflows/tests.yml)
+
 A simple open-source Python toolkit for detecting marine heatwave (MHW)
 conditions and coral bleaching thermal stress in the Coral Triangle, 
 Andaman Sea, Red Sea or the Great Barrier Reef using Copernicus Marine 
