@@ -22,6 +22,8 @@ def compare_dhw(dhw: xr.DataArray, reference: xr.DataArray, ocean_mask: xr.DataA
 
     ref = to_grid(ref, dhw)
     dhw, ref = xr.align(dhw, ref, join="inner")
+    # the mask may be on another product's grid (coordinates differ in the last decimals)
+    ocean_mask = to_grid(ocean_mask.astype(float), dhw).fillna(0).astype(bool)
 
     valid = (ocean_mask & ref.notnull().any(dim="time")).compute()
     peak = dhw.max(dim="time").where(valid).compute()

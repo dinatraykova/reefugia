@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from reefugia import fetch
+from reefugia import constants, fetch
 from reefugia.constants import BASELINE_START, BASELINE_END
 from reefugia.constants import (
     CLIMATOLOGY_PERCENTILE,
@@ -15,27 +15,38 @@ from reefugia.constants import (
     MHW_MAX_GAP_DAYS,
     BLEACHING_THRESHOLD_OFFSET,
     DHW_WINDOW_DAYS,
+    DHW_MMM_START,
+    DHW_MMM_END,
+    DHW_MMM_REFERENCE_YEAR,
     ZARR_FORMAT,
 )
 
-# path helpers
-def get_climatology_path(region_name: str) -> str:
-    start_year = BASELINE_START[:4]
-    end_year = BASELINE_END[:4]
+# cache paths, one set per SST product
+def _data_path(name: str) -> str:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(repo_root, "data", f"climatology_{region_name}_{start_year}_{end_year}.zarr")
+    return os.path.join(repo_root, "data", name)
+
+def get_climatology_path(region_name: str) -> str:
+    return _data_path(f"climatology_{region_name}_{constants.SST_PRODUCT}.zarr")
 
 def get_mhw_path(region_name: str, start: str, end: str) -> str:
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(repo_root, "data", f"mhw_{region_name}_{start}_{end}.zarr")
+    return _data_path(f"mhw_{region_name}_{constants.SST_PRODUCT}_{start}_{end}.zarr")
 
 def get_dhw_path(region_name: str, start: str, end: str) -> str:
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(repo_root, "data", f"dhw_{region_name}_{start}_{end}.zarr")
+    return _data_path(f"dhw_{region_name}_{constants.SST_PRODUCT}_{start}_{end}.zarr")
 
-# constants each cache depends on — a mismatch on load triggers a recompute
+# settings stored with each cache; a mismatch on load triggers a recompute
+def _mmm_params() -> dict:
+    params = {"sst_product": constants.SST_PRODUCT,
+              "dhw_mmm_baseline": constants.DHW_MMM_BASELINE}
+    if constants.DHW_MMM_BASELINE == "noaa":
+        params.update(dhw_mmm_start=DHW_MMM_START, dhw_mmm_end=DHW_MMM_END,
+                      dhw_mmm_reference_year=DHW_MMM_REFERENCE_YEAR)
+    return params
+
 def _climatology_params() -> dict:
     return {
+        **_mmm_params(),
         "baseline_start": BASELINE_START,
         "baseline_end": BASELINE_END,
         "climatology_percentile": CLIMATOLOGY_PERCENTILE,
@@ -50,6 +61,7 @@ def _mhw_params() -> dict:
 
 def _dhw_params() -> dict:
     return {
+        **_mmm_params(),
         "baseline_start": BASELINE_START,
         "baseline_end": BASELINE_END,
         "bleaching_threshold_offset": BLEACHING_THRESHOLD_OFFSET,
@@ -141,15 +153,36 @@ def compute_threshold(sst: xr.DataArray) -> xr.DataArray:
     return threshold.assign_coords(dayofyear=np.arange(1, 367)).transpose("dayofyear", ...)
 
 
-# compute analysis diagnostics
+def compute_mmm_noaa(sst: xr.DataArray) -> xr.DataArray:
+    """NOAA Coral Reef Watch MMM from daily SST: per pixel and calendar month, a
+    linear trend through the yearly monthly means, evaluated at
+    DHW_MMM_REFERENCE_YEAR; the MMM is the warmest of the 12 months."""
+    monthly = sst.resample(time="MS").mean()
+
+    def at_reference_year(da):
+        year = da.time.dt.year.astype(float)
+        dx = year - year.mean()
+        mean = da.mean(dim="time")
+        slope = (dx * (da - mean)).sum(dim="time") / (dx ** 2).sum()
+        return mean + slope * (DHW_MMM_REFERENCE_YEAR - year.mean())
+
+    return monthly.groupby("time.month").map(at_reference_year).max(dim="month")
+
+
 def compute_climatology(region_name: str) -> dict:
-    historical = fetch.fetch_data(region_name, BASELINE_START, BASELINE_END)
-    sst = historical["analysed_sst"]
+    noaa_mmm = constants.DHW_MMM_BASELINE == "noaa"
+    start = min(BASELINE_START, DHW_MMM_START) if noaa_mmm else BASELINE_START
+    end = max(BASELINE_END, DHW_MMM_END) if noaa_mmm else BASELINE_END
+    sst_all = fetch.fetch_data(region_name, start, end)["analysed_sst"]
+    sst = sst_all.sel(time=slice(BASELINE_START, BASELINE_END))
 
     threshold = compute_threshold(sst)
 
     monthly_mean = sst.groupby("time.month").mean()
-    mmm = monthly_mean.max(dim="month")
+    if noaa_mmm:
+        mmm = compute_mmm_noaa(sst_all.sel(time=slice(DHW_MMM_START, DHW_MMM_END)))
+    else:
+        mmm = monthly_mean.max(dim="month")
 
     return {
         "sst_threshold": threshold,
@@ -161,8 +194,7 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
     """MHW exceedance and persistence masks from ds["analysed_sst"]."""
     sst_threshold = load_or_compute_climatology(region_name)["sst_threshold"]
 
-    # add lead-in so rolling windows are full from the first day, and an event
-    # ending just before it can still be joined across a short gap
+    # lead-in so rolling windows are full and earlier events can be joined
     first = sst.time.values[0]
     sst = _with_lead_in(sst, region_name, MHW_PERSISTENCE_DAYS - 1 + MHW_MAX_GAP_DAYS)
 
@@ -178,7 +210,7 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
 
     run_end = (rolling_sum >= MHW_PERSISTENCE_DAYS).astype("int8")
 
-    # backward rolling max flags the whole event, not just from day 5 on
+    # backward rolling max flags the whole event, not just from day 5
     reverse = slice(None, None, -1)
     mhw = (run_end.isel(time=reverse)
                   .rolling(time=MHW_PERSISTENCE_DAYS, min_periods=1).max()
@@ -195,7 +227,7 @@ def compute_mhw(sst: xr.DataArray, region_name: str) -> dict:
 def compute_dhw(sst: xr.DataArray, region_name: str, mmm: xr.DataArray = None,
                 lead_in: bool = True) -> xr.DataArray:
     """Degree Heating Weeks (NOAA CRW method) from ds["analysed_sst"].
-    Uses the region's 1991–2020 MMM unless another MMM (in K, same grid) is given.
+    Uses the region's cached MMM unless another MMM (in K, same grid) is given.
     With lead_in=False no earlier SST is fetched, so pass SST that starts 83 days
     before the dates you need (the first 83 days have incomplete windows)."""
     if mmm is None:

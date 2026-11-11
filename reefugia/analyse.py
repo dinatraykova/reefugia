@@ -45,7 +45,6 @@ def summarise_dhw(dhw: xr.DataArray, ocean_mask: xr.DataArray) -> dict:
 def monthly_sst_anomaly(sst: xr.DataArray, monthly_climatology: xr.DataArray, ocean_mask: xr.DataArray) -> pd.DataFrame:
     """Monthly regional mean SST vs the 1991–2020 climatology (°C)."""
 
-    # spatial mean over ocean pixels for each month in analysis period
     sst_monthly = (sst.where(ocean_mask)
                      .mean(dim=["latitude", "longitude"])
                      .groupby("time.month")
@@ -56,7 +55,6 @@ def monthly_sst_anomaly(sst: xr.DataArray, monthly_climatology: xr.DataArray, oc
                                        .mean(dim=["latitude", "longitude"])
                                        .compute())
 
-    # only use months present in the analysis period
     months_present = sst_monthly.month.values
     df = pd.DataFrame({
         "sst_mean": sst_monthly.values + KELVIN_TO_CELSIUS,

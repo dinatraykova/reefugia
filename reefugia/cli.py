@@ -1,26 +1,34 @@
-# standard library
 import json
 import os
 import time
 
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend — no popups during CLI run
+matplotlib.use("Agg")  # no plot windows
 import matplotlib.pyplot as plt
 import click
 
-# internal
-from reefugia import fetch, detect, analyse, visualise
+from reefugia import constants, fetch, detect, analyse, visualise
 from reefugia.constants import ANALYSIS_START, ANALYSIS_END
 
 @click.command()
 @click.option("--region", default="coral_triangle", show_default=True, help="Region to analyse")
 @click.option("--start", default=ANALYSIS_START, show_default=True, help="Start date (YYYY-MM-DD)")
 @click.option("--end", default=ANALYSIS_END, show_default=True, help="End date (YYYY-MM-DD)")
-def main(region, start, end):
+@click.option("--sst", "sst_product", type=click.Choice(sorted(fetch.SST_DATASETS)),
+              default=constants.SST_PRODUCT, show_default=True,
+              help="SST product: c3s (recommended for DHW) or ostia (DHW runs high, see README)")
+def main(region, start, end, sst_product):
     """🪸 Reefugia — coral bleaching thermal stress analysis."""
 
+    constants.SST_PRODUCT = sst_product
+    tag = f"{region}_{sst_product}_{start}_{end}"
+
     start_time = time.time()
-    click.echo(f"\n🌊 Fetching SST data for {region} from {start} to {end}...")
+    if sst_product == "ostia":
+        click.secho("⚠️  OSTIA SST gives DHW well above NOAA Coral Reef Watch's (about "
+                    "+9 °C-weeks in the Red Sea in 2023), so NOAA's alert levels will "
+                    "over-warn. Use --sst c3s for DHW; see the README.", fg="yellow")
+    click.echo(f"\n🌊 Fetching {sst_product.upper()} SST for {region} from {start} to {end}...")
     ds = fetch.fetch_data(region, start, end)
     sst = ds["analysed_sst"]
     ocean_mask = ~sst.isel(time=0).isnull().compute()
@@ -57,16 +65,16 @@ def main(region, start, end):
     output_dir = os.path.join(repo_root, "outputs")
     os.makedirs(output_dir, exist_ok=True)
 
-    anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{region}_{start}_{end}.csv"))
+    anomaly.to_csv(os.path.join(output_dir, f"sst_anomaly_{tag}.csv"))
 
-    with open(os.path.join(output_dir, f"mhw_summary_{region}_{start}_{end}.json"), "w") as f:
+    with open(os.path.join(output_dir, f"mhw_summary_{tag}.json"), "w") as f:
         json.dump(mhw_summary, f, indent=2)
 
-    with open(os.path.join(output_dir, f"dhw_summary_{region}_{start}_{end}.json"), "w") as f:
+    with open(os.path.join(output_dir, f"dhw_summary_{tag}.json"), "w") as f:
         json.dump(dhw_summary, f, indent=2)
 
-    mhw_days.to_netcdf(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.nc"))
-    dhw.to_netcdf(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.nc"))
+    mhw_days.to_netcdf(os.path.join(output_dir, f"mhw_days_{tag}.nc"))
+    dhw.to_netcdf(os.path.join(output_dir, f"dhw_{tag}.nc"))
 
     click.echo(f"\nData saved to {output_dir}/")
 
@@ -81,7 +89,7 @@ def main(region, start, end):
         hotspot_lon=mhw_summary["hotspot_lon"],
         title=f"Marine heatwave days, {year} — {place}"
     )
-    fig.savefig(os.path.join(output_dir, f"mhw_days_{region}_{start}_{end}.png"),
+    fig.savefig(os.path.join(output_dir, f"mhw_days_{tag}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
 
@@ -92,7 +100,7 @@ def main(region, start, end):
         max_dhw=dhw_summary["max_dhw"],
         title=f"Peak Degree Heating Weeks, {year} — {place}"
     )
-    fig.savefig(os.path.join(output_dir, f"dhw_{region}_{start}_{end}.png"),
+    fig.savefig(os.path.join(output_dir, f"dhw_{tag}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
 
@@ -101,7 +109,7 @@ def main(region, start, end):
         climatology,
         title=f"Largest monthly SST anomaly, {year} — {place}"
     )
-    fig.savefig(os.path.join(output_dir, f"sst_anomaly_max_{region}_{start}_{end}.png"),
+    fig.savefig(os.path.join(output_dir, f"sst_anomaly_max_{tag}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
 
@@ -110,7 +118,7 @@ def main(region, start, end):
         label="DHW (°C-weeks)",
         title=f"DHW by month, {year} — {place}"
     )
-    fig.savefig(os.path.join(output_dir, f"monthly_matrix_dhw_{region}_{start}_{end}.png"),
+    fig.savefig(os.path.join(output_dir, f"monthly_matrix_dhw_{tag}.png"),
                 dpi=256, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
 
@@ -120,7 +128,7 @@ def main(region, start, end):
     click.echo("\n── Generating DHW animation ─────")
     anim = visualise.plot_dhw_animation(dhw, title=f"DHW — {place}")
     anim.save(
-        os.path.join(output_dir, f"dhw_animation_{region}_{start}_{end}.mp4"),
+        os.path.join(output_dir, f"dhw_animation_{tag}.mp4"),
         writer="ffmpeg",
         fps=10,
         dpi = 80
@@ -130,6 +138,3 @@ def main(region, start, end):
 
     elapsed = time.time() - start_time
     click.echo(f"\n⏱️  Total run time: {int(elapsed // 60)}m {int(elapsed % 60)}s")
-
-if __name__ == "__main__":
-    main()

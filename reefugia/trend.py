@@ -15,8 +15,7 @@ from sklearn.metrics import r2_score
 from reefugia.constants import ZARR_FORMAT
 from reefugia.fetch import get_region
 
-# NOAA CRW 5 km daily product on ERDDAP; tried in order, the second is a mirror
-# of the same dataset (same variables and layout) for when the first is down
+# NOAA CRW 5 km daily product on ERDDAP; the second is a mirror, tried if the first fails
 CRW_URLS = (
     "https://coastwatch.pfeg.noaa.gov/erddap/griddap/NOAA_DHW",
     "https://upwell.pfeg.noaa.gov/erddap/griddap/dhw_5km",
@@ -29,11 +28,11 @@ def _open_crw(timeout: int = 60) -> xr.Dataset:
     errors = []
     for url in CRW_URLS:
         try:
-            # ERDDAP only speaks DAP2, so pydap's protocol warning is noise
+            # ERDDAP only speaks DAP2
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="PyDAP was unable to determine the DAP protocol")
                 return xr.open_dataset(url, engine="pydap", chunks={"time": 30}, timeout=timeout)
-        except OSError as e:  # connection errors (requests' exceptions are OSErrors)
+        except OSError as e:  # includes requests' connection errors
             errors.append(f"  {url}: {type(e).__name__}")
     raise ConnectionError("Could not reach any NOAA CRW server:\n" + "\n".join(errors))
 
@@ -60,15 +59,14 @@ def fetch_crw_dhw(region_name: str, start_year: int = 1986, end_year: int = 2025
     return dhw
 
 
-# servers that refused to connect in this session, skipped by _download_crw
+# servers that refused to connect this session
 _unreachable = set()
 
 
 def _download_crw(region_name: str, start: str, end: str, variable: str,
                   connect_timeout: int = 30, read_timeout: int = 900,
                   attempts: int = 2) -> xr.DataArray:
-    # one ERDDAP request for the subset, as a NetCDF file. A slow server (read
-    # timeout, 5xx) is retried once; a server that can't be reached is skipped
+    # one ERDDAP NetCDF request; slow servers are retried once, unreachable ones skipped
     import requests
     b = get_region(region_name)
     query = (f"{variable}[({start}T12:00:00Z):1:({end}T12:00:00Z)]"
@@ -89,7 +87,7 @@ def _download_crw(region_name: str, start: str, end: str, variable: str,
                 with xr.open_dataset(tmp, engine="scipy") as ds:
                     return ds[variable].load()
             except requests.ConnectTimeout as e:
-                _unreachable.add(url)  # can't connect at all, don't wait on it again
+                _unreachable.add(url)
                 errors.append(f"  {url}: {type(e).__name__}: {str(e)[:200]}")
                 break
             except requests.RequestException as e:
@@ -115,8 +113,7 @@ def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)[variable]
 
-    # 3-month pieces keep each request quick for the server; pause between them
-    # so the requests don't arrive in a burst
+    # small, spaced-out requests, as NOAA asks
     edges = pd.date_range(start, end, freq="QS").union([pd.Timestamp(start)])
     pieces = []
     for k, piece_start in enumerate(edges):
@@ -146,7 +143,7 @@ def load_or_fetch_crw_annual_max(region_name: str, start_year: int = 1986,
     path = _crw_path(region_name, start_year, end_year)
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
-    # reduce lazily so only one year per pixel is held in memory, not the daily record
+    # reduce lazily so the daily record is never held in memory
     dhw = annual_max_dhw(fetch_crw_dhw(region_name, start_year, end_year)).compute()
     dhw.to_dataset(name="dhw").to_zarr(path, zarr_format=ZARR_FORMAT)
     zarr.consolidate_metadata(path)

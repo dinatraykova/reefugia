@@ -1,6 +1,14 @@
 import xarray as xr
 import copernicusmarine
 
+from reefugia import constants
+
+# Copernicus Marine dataset IDs for each SST product (variable analysed_sst, in K)
+SST_DATASETS = {
+    "ostia": "METOFFICE-GLO-SST-L4-REP-OBS-SST",
+    "c3s": "C3S-GLO-SST-L4-REP-OBS-SST",
+}
+
 # Bounding boxes for key coral reef regions
 # TODO: replace with proper polygon boundaries from regionmask for finer analysis
 REGIONS = {
@@ -40,13 +48,21 @@ def get_region(region_name: str) -> dict:
         raise ValueError(f"Unknown region '{region_name}'. Available regions: {list(REGIONS.keys())}")
     return REGIONS[region_name]
 
-def fetch_data(region_name: str, start: str, end: str):
-    """Copernicus SST for a region and date range (in Kelvin)."""
+def dataset_id(product: str = None) -> str:
+    """Copernicus dataset ID for an SST product (default constants.SST_PRODUCT)."""
+    product = product or constants.SST_PRODUCT
+    if product not in SST_DATASETS:
+        raise ValueError(f"Unknown SST product '{product}'. Options: {list(SST_DATASETS)}")
+    return SST_DATASETS[product]
+
+def fetch_data(region_name: str, start: str, end: str, product: str = None):
+    """Copernicus SST for a region and date range (in Kelvin), from
+    constants.SST_PRODUCT unless another product is given."""
 
     region = get_region(region_name)
 
     dataset = copernicusmarine.open_dataset(
-        dataset_id="C3S-GLO-SST-L4-REP-OBS-SST",
+        dataset_id=dataset_id(product),
         minimum_longitude=region["min_lon"],
         maximum_longitude=region["max_lon"],
         minimum_latitude=region["min_lat"],
