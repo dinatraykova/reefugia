@@ -19,7 +19,6 @@ classifiers = [
 dependencies = [
     # data access
     "copernicusmarine>=2.5",        # fetch.py — Copernicus SST
-    "pydap>=3.5",                   # trend.py — OPeNDAP engine for NOAA CRW
     # gridded data handling
     "xarray>=2025.1",
     "dask>=2024.1",                 # lazy/chunked computation in detect.py, trend.py

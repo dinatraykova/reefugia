@@ -212,3 +212,65 @@ def test_compute_dhw_without_lead_in_uses_only_the_given_sst(monkeypatch):
     values = dhw.values.ravel()
     assert values[0] == pytest.approx(2 / 7)   # window holds one day
     assert values[-1] == pytest.approx(24.0)   # window full on day 84
+
+
+# ── NOAA-style MMM and SST products ───────────────────────────────────────────
+
+def daily_with_monthly_values(monthly_value):
+    """Daily single-pixel SST 1985–2012 where every day of a month has
+    monthly_value(year, month)."""
+    dates = pd.date_range("1985-01-01", "2012-12-31", freq="D")
+    values = np.array([monthly_value(d.year, d.month) for d in dates])
+    return make_sst(values, start="1985-01-01")
+
+
+def test_mmm_noaa_is_the_trend_at_the_reference_year():
+    # warmest month is August (300.5 K); every month warms 0.03 K per year
+    base = {m: 298 + 2.5 * np.exp(-((m - 8) ** 2) / 4) for m in range(1, 13)}
+    sst = daily_with_monthly_values(lambda y, m: base[m] + 0.03 * (y - 1985))
+    expected = base[8] + 0.03 * (1988.2857142857142 - 1985)
+    assert detect.compute_mmm_noaa(sst).values.item() == pytest.approx(expected, abs=1e-9)
+
+
+def test_mmm_noaa_matches_numpy_polyfit():
+    rng = np.random.default_rng(1)
+    table = {(y, m): 299 + 2 * np.sin(m / 12 * 2 * np.pi) + 0.02 * (y - 1985) + rng.normal(0, 0.3)
+             for y in range(1985, 2013) for m in range(1, 13)}
+    sst = daily_with_monthly_values(lambda y, m: table[(y, m)])
+    years = np.arange(1985, 2013)
+    per_month = [np.polyval(np.polyfit(years, [table[(y, m)] for y in years], 1), 1988.2857142857142)
+                 for m in range(1, 13)]
+    assert detect.compute_mmm_noaa(sst).values.item() == pytest.approx(max(per_month), abs=1e-9)
+
+
+def test_sst_product_selects_the_copernicus_dataset(monkeypatch):
+    from reefugia import constants, fetch
+    assert fetch.dataset_id("ostia") == "METOFFICE-GLO-SST-L4-REP-OBS-SST"
+    assert fetch.dataset_id("c3s") == "C3S-GLO-SST-L4-REP-OBS-SST"
+    monkeypatch.setattr(constants, "SST_PRODUCT", "c3s")
+    assert fetch.dataset_id() == "C3S-GLO-SST-L4-REP-OBS-SST"
+    assert "_c3s_" in detect.get_dhw_path("red_sea", "2023-01-01", "2023-12-31")
+    with pytest.raises(ValueError):
+        fetch.dataset_id("unknown")
+
+
+def test_compare_dhw_accepts_a_mask_on_a_slightly_different_grid():
+    # two products' 0.05° grids can differ in the last decimals of the coordinates
+    t = pd.date_range("2023-01-01", periods=10, freq="D")
+    lat, lon = np.array([0.025, 0.075]), np.array([0.025, 0.075])
+    dhw = xr.DataArray(np.linspace(0, 1, 10)[:, None, None] * np.array([[1.0, 2.0], [3.0, 4.0]]),
+                       dims=("time", "latitude", "longitude"),
+                       coords={"time": t, "latitude": lat, "longitude": lon})
+    mask = xr.DataArray(np.ones((2, 2), bool), dims=("latitude", "longitude"),
+                        coords={"latitude": lat.astype("float32") + 1e-6,
+                                "longitude": lon.astype("float32") - 1e-6})
+    assert validate.compare_dhw(dhw, dhw, mask)["n_pixels"] == 4
+
+
+def test_cache_settings_round_trip_including_floats(tmp_path):
+    # a cache must reload as valid with the settings it was written with
+    params = {"dhw_mmm_reference_year": 1988.2857142857142, "mhw_persistence_days": 5, "sst_product": "c3s"}
+    path = str(tmp_path / "cache.zarr")
+    detect._write_cache(xr.Dataset({"v": ("x", [1.0, 2.0])}), path, params)
+    assert detect._open_valid_cache(path, params) is not None
+    assert detect._open_valid_cache(path, {**params, "mhw_persistence_days": 6}) is None

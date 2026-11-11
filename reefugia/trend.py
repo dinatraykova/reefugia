@@ -3,7 +3,6 @@
 import os
 import tempfile
 import time
-import warnings
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -23,41 +22,6 @@ CRW_URLS = (
 
 
 # ── Data access ──────────────────────────────────────────────────────────────
-
-def _open_crw(timeout: int = 60) -> xr.Dataset:
-    errors = []
-    for url in CRW_URLS:
-        try:
-            # ERDDAP only speaks DAP2
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="PyDAP was unable to determine the DAP protocol")
-                return xr.open_dataset(url, engine="pydap", chunks={"time": 30}, timeout=timeout)
-        except OSError as e:  # includes requests' connection errors
-            errors.append(f"  {url}: {type(e).__name__}")
-    raise ConnectionError("Could not reach any NOAA CRW server:\n" + "\n".join(errors))
-
-
-def fetch_crw_dhw(region_name: str, start_year: int = 1986, end_year: int = 2025,
-                  variable: str = "CRW_DHW") -> xr.DataArray:
-    """Lazy daily NOAA CRW data for a region, DHW by default (e.g. also CRW_SST, CRW_HOTSPOT).
-    The record starts 1985-04-01, so 1986 is the first full year."""
-    bounds = get_region(region_name)
-    ds = _open_crw()
-
-    # ERDDAP stores NOAA_DHW latitude north → south
-    lat = ds.latitude
-    if lat[0] > lat[-1]:
-        lat_slice = slice(bounds["max_lat"], bounds["min_lat"])
-    else:
-        lat_slice = slice(bounds["min_lat"], bounds["max_lat"])
-
-    dhw = ds[variable].sel(
-        time=slice(f"{start_year}-01-01", f"{end_year}-12-31"),
-        latitude=lat_slice,
-        longitude=slice(bounds["min_lon"], bounds["max_lon"]),
-    )
-    return dhw
-
 
 # servers that refused to connect this session
 _unreachable = set()
@@ -102,17 +66,7 @@ def _download_crw(region_name: str, start: str, end: str, variable: str,
     raise ConnectionError("Could not download from any NOAA CRW server:\n" + "\n".join(errors))
 
 
-def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
-                            variable: str = "CRW_DHW") -> xr.DataArray:
-    """Cached daily NOAA CRW data for a region and date range (dates as YYYY-MM-DD),
-    e.g. CRW_DHW, CRW_SST or CRW_HOTSPOT. Downloads in 3-month pieces."""
-    import zarr
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    name = variable.lower().removeprefix("crw_")
-    path = os.path.join(repo_root, "data", f"crw_{name}_{region_name}_{start}_{end}.zarr")
-    if os.path.exists(path):
-        return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)[variable]
-
+def _download_range(region_name: str, start: str, end: str, variable: str) -> xr.DataArray:
     # small, spaced-out requests, as NOAA asks
     edges = pd.date_range(start, end, freq="QS").union([pd.Timestamp(start)])
     pieces = []
@@ -123,30 +77,55 @@ def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
             time.sleep(5)
         pieces.append(_download_crw(region_name, piece_start.strftime("%Y-%m-%d"),
                                     piece_end.strftime("%Y-%m-%d"), variable))
-    da = xr.concat(pieces, dim="time")
-
-    da.to_dataset(name=variable).to_zarr(path, zarr_format=ZARR_FORMAT, mode="w")
-    zarr.consolidate_metadata(path)
-    return da
+    return xr.concat(pieces, dim="time")
 
 
-def _crw_path(region_name: str, start_year: int, end_year: int) -> str:
+def _data_path(name: str) -> str:
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(repo_root, "data",
-                        f"crw_dhw_annual_max_{region_name}_{start_year}_{end_year}.zarr")
+    return os.path.join(repo_root, "data", name)
+
+
+def _save(da: xr.DataArray, name: str, path: str) -> None:
+    import zarr
+    da.to_dataset(name=name).to_zarr(path, zarr_format=ZARR_FORMAT, mode="w")
+    zarr.consolidate_metadata(path)
+
+
+def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
+                            variable: str = "CRW_DHW") -> xr.DataArray:
+    """Cached daily NOAA CRW data for a region and date range (dates as YYYY-MM-DD),
+    e.g. CRW_DHW, CRW_SST or CRW_HOTSPOT. Downloads in 3-month pieces."""
+    name = variable.lower().removeprefix("crw_")
+    path = _data_path(f"crw_{name}_{region_name}_{start}_{end}.zarr")
+    if os.path.exists(path):
+        return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)[variable]
+    da = _download_range(region_name, start, end, variable)
+    _save(da, variable, path)
+    return da
 
 
 def load_or_fetch_crw_annual_max(region_name: str, start_year: int = 1986,
                                  end_year: int = 2025) -> xr.DataArray:
-    """Cached annual max NOAA CRW DHW per pixel (dims: year, latitude, longitude)."""
-    import zarr
-    path = _crw_path(region_name, start_year, end_year)
+    """Cached annual max NOAA CRW DHW per pixel (dims: year, latitude, longitude).
+    Each year is downloaded and cached on its own, so an interrupted run resumes."""
+    path = _data_path(f"crw_dhw_annual_max_{region_name}_{start_year}_{end_year}.zarr")
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
-    # reduce lazily so the daily record is never held in memory
-    dhw = annual_max_dhw(fetch_crw_dhw(region_name, start_year, end_year)).compute()
-    dhw.to_dataset(name="dhw").to_zarr(path, zarr_format=ZARR_FORMAT)
-    zarr.consolidate_metadata(path)
+
+    years = []
+    for year in range(start_year, end_year + 1):
+        year_path = _data_path(f"crw_dhw_annual_max_{region_name}_{year}.zarr")
+        if os.path.exists(year_path):
+            year_max = xr.open_zarr(year_path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
+        else:
+            print(f"Downloading NOAA CRW DHW for {year}...")
+            daily = _download_range(region_name, f"{year}-01-01", f"{year}-12-31", "CRW_DHW")
+            year_max = daily.max(dim="time")
+            _save(year_max, "dhw", year_path)
+        years.append(year_max.expand_dims(year=[year]))
+
+    dhw = xr.concat(years, dim="year").sortby("latitude").compute()
+    _save(dhw, "dhw", path)
     return dhw
 
 
