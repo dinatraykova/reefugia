@@ -10,6 +10,8 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import imageio_ffmpeg
 
+from reefugia.analyse import hotspot, TOP_QUANTILE
+
 mpl.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
 
 # ── Style ─────────────────────────────────────────────────────────────────────
@@ -143,13 +145,13 @@ def plot_mhw_days(mhw_days: xr.DataArray,
                   hotspot_lon: float,
                   title: str = None) -> plt.Figure:
     """Map of MHW days per pixel, with the hotspot marked."""
+    top = float(mhw_days.quantile(TOP_QUANTILE))
     fig, ax = _map_axes(mhw_days)
     mesh = ax.pcolormesh(mhw_days.longitude, mhw_days.latitude, mhw_days.values,
-                         cmap=HEAT_CMAP, vmin=0, vmax=float(mhw_days.max()),
+                         cmap=HEAT_CMAP, vmin=0, vmax=top,
                          shading="nearest", transform=ccrs.PlateCarree(), zorder=1)
-    _colorbar(fig, mesh, ax, "Marine heatwave days")
-    _mark_hotspot(ax, hotspot_lon, hotspot_lat,
-                  f"Most MHW days ({int(mhw_days.max())})")
+    _colorbar(fig, mesh, ax, "Marine heatwave days", extend="max")
+    _mark_hotspot(ax, hotspot_lon, hotspot_lat, f"Hotspot (top 1%, {top:.0f}+ days)")
     ax.set_title(title or "Marine heatwave days")
     return fig
 
@@ -164,19 +166,19 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
     sst_anomaly = (sst_monthly - clim).compute()
     sst_anomaly_max = sst_anomaly.max(dim="time")
 
-    max_idx = sst_anomaly_max.argmax(dim=["latitude", "longitude"])
-    hotspot_lat = float(sst_anomaly_max.latitude[max_idx["latitude"]].values)
-    hotspot_lon = float(sst_anomaly_max.longitude[max_idx["longitude"]].values)
-    hotspot_month = str(sst_anomaly.isel(max_idx).idxmax(dim="time").values)[:7]
+    top = float(sst_anomaly_max.quantile(TOP_QUANTILE))
+    hotspot_lat, hotspot_lon = hotspot(sst_anomaly_max)
+    at_hotspot = sst_anomaly.sel(latitude=hotspot_lat, longitude=hotspot_lon)
+    hotspot_month = str(at_hotspot.idxmax(dim="time").values)[:7]
 
     fig, ax = _map_axes(sst_anomaly_max)
     mesh = ax.pcolormesh(sst_anomaly_max.longitude, sst_anomaly_max.latitude,
                          sst_anomaly_max.values, cmap=HEAT_CMAP, vmin=0,
-                         vmax=float(sst_anomaly_max.max()), shading="nearest",
+                         vmax=top, shading="nearest",
                          transform=ccrs.PlateCarree(), zorder=1)
-    _colorbar(fig, mesh, ax, "Largest monthly SST anomaly (°C)")
+    _colorbar(fig, mesh, ax, "Largest monthly SST anomaly (°C)", extend="max")
     _mark_hotspot(ax, hotspot_lon, hotspot_lat,
-                  f"Largest anomaly ({float(sst_anomaly_max.max()):.1f} °C, {hotspot_month})")
+                  f"Hotspot (top 1%, {top:.1f}+ °C, {hotspot_month})")
     ax.set_title(title or "Largest monthly SST anomaly")
     return fig
 
@@ -185,17 +187,17 @@ def plot_sst_anomaly_max(sst: xr.DataArray,
 def plot_dhw(dhw: xr.DataArray,
              hotspot_lat: float,
              hotspot_lon: float,
-             max_dhw: float,
+             p99_dhw: float,
              title: str = None) -> plt.Figure:
     """Map of peak DHW per pixel with NOAA alert bands, hotspot marked."""
     dhw_max = dhw.max(dim="time").compute()
-    dhw_max_time_idx = int(dhw.max(dim=["latitude", "longitude"]).argmax(dim="time").values)
-    dhw_max_date = str(dhw.time[dhw_max_time_idx].values)[:10]
+    at_hotspot = dhw.sel(latitude=hotspot_lat, longitude=hotspot_lon)
+    peak_date = str(at_hotspot.idxmax(dim="time").values)[:10]
 
     fig, ax = _map_axes(dhw_max)
     _dhw_mesh(fig, dhw_max, ax)
     _mark_hotspot(ax, hotspot_lon, hotspot_lat,
-                  f"Peak DHW ({max_dhw:.1f} °C-weeks, {dhw_max_date})")
+                  f"Hotspot (top 1%, {p99_dhw:.1f}+ °C-weeks, {peak_date})")
     ax.set_title(title or "Peak Degree Heating Weeks")
     return fig
 

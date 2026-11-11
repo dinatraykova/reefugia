@@ -274,3 +274,23 @@ def test_cache_settings_round_trip_including_floats(tmp_path):
     detect._write_cache(xr.Dataset({"v": ("x", [1.0, 2.0])}), path, params)
     assert detect._open_valid_cache(path, params) is not None
     assert detect._open_valid_cache(path, {**params, "mhw_persistence_days": 6}) is None
+
+
+# ── Robust hotspot ────────────────────────────────────────────────────────────
+
+def test_single_outlier_pixel_does_not_move_hotspot_or_p99():
+    from reefugia import analyse
+    lat = np.arange(10.0, 20.0, 0.1)
+    lon = np.arange(30.0, 40.0, 0.1)
+    yy, xx = np.meshgrid(lat, lon, indexing="ij")
+    # smooth warm area around (15, 35), peak 10
+    field = 10 * np.exp(-((yy - 15) ** 2 + (xx - 35) ** 2) / 2)
+    field[0, 0] = 30.0  # bad corner pixel
+    da = xr.DataArray(field, coords={"latitude": lat, "longitude": lon},
+                      dims=("latitude", "longitude"))
+    hot_lat, hot_lon = analyse.hotspot(da)
+    assert abs(hot_lat - 15) < 0.2 and abs(hot_lon - 35) < 0.2
+    dhw = da.expand_dims(time=pd.date_range("2023-01-01", periods=1))
+    summary = analyse.summarise_dhw(dhw, xr.ones_like(da, dtype=bool))
+    assert summary["max_dhw"] == 30.0
+    assert summary["p99_dhw"] < 10.0

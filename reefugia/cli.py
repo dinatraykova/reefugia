@@ -41,7 +41,7 @@ def main(region, start, end, sst_product):
     click.echo("\n── MHW Summary ──────────────────")
     click.echo(f"Mean MHW days:     {mhw_summary['mean_days']:.1f}")
     click.echo(f"Median MHW days:   {mhw_summary['median_days']:.1f}")
-    click.echo(f"Max MHW days:      {mhw_summary['max_days']:.0f}")
+    click.echo(f"Top 1% MHW days:   {mhw_summary['p99_days']:.0f}+ (max {mhw_summary['max_days']:.0f})")
     click.echo(f"% ocean affected:  {mhw_summary['pct_affected']:.1f}%")
 
     # DHW 
@@ -50,7 +50,7 @@ def main(region, start, end, sst_product):
 
     click.echo("\n── DHW Summary ──────────────────")
     click.echo(f"Mean peak DHW:  {dhw_summary['mean_peak_dhw']:.1f}")
-    click.echo(f"Max DHW:        {dhw_summary['max_dhw']:.0f}")
+    click.echo(f"Top 1% DHW:     {dhw_summary['p99_dhw']:.1f}+ (max {dhw_summary['max_dhw']:.1f})")
     click.echo(f"% above 4 DHW:  {dhw_summary['pct_above_4']:.1f}%")
     click.echo(f"% above 8 DHW:  {dhw_summary['pct_above_8']:.1f}%")
 
@@ -97,7 +97,7 @@ def main(region, start, end, sst_product):
         dhw,
         hotspot_lat=dhw_summary["hotspot_lat"],
         hotspot_lon=dhw_summary["hotspot_lon"],
-        max_dhw=dhw_summary["max_dhw"],
+        p99_dhw=dhw_summary["p99_dhw"],
         title=f"Peak Degree Heating Weeks, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"dhw_{tag}.png"),
