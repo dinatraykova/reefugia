@@ -87,6 +87,7 @@ def main(region, start, end, sst_product):
         mhw_days,
         hotspot_lat=mhw_summary["hotspot_lat"],
         hotspot_lon=mhw_summary["hotspot_lon"],
+        p99_days=mhw_summary["p99_days"],
         title=f"Marine heatwave days, {year} — {place}"
     )
     fig.savefig(os.path.join(output_dir, f"mhw_days_{tag}.png"),

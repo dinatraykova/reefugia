@@ -143,9 +143,10 @@ def _dhw_mesh(fig, dhw_2d: xr.DataArray, ax):
 def plot_mhw_days(mhw_days: xr.DataArray,
                   hotspot_lat: float,
                   hotspot_lon: float,
+                  p99_days: float,
                   title: str = None) -> plt.Figure:
     """Map of MHW days per pixel, with the hotspot marked."""
-    top = float(mhw_days.quantile(TOP_QUANTILE))
+    top = p99_days
     fig, ax = _map_axes(mhw_days)
     mesh = ax.pcolormesh(mhw_days.longitude, mhw_days.latitude, mhw_days.values,
                          cmap=HEAT_CMAP, vmin=0, vmax=top,
@@ -278,7 +279,7 @@ def plot_monthly_matrix(da: xr.DataArray,
                         label: str = "DHW (°C-weeks)",
                         title: str = None,
                         alert_levels: bool = True) -> plt.Figure:
-    """Month × year matrix of regional means (bar chart for one year)."""
+    """Month × year matrix of regional mean and top 1% of pixels (bar chart for one year)."""
     month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -288,7 +289,10 @@ def plot_monthly_matrix(da: xr.DataArray,
         return df.groupby(["month", "year"])["value"].agg(how).unstack("year")
 
     matrix = by_month_year(da.mean(dim=["latitude", "longitude"]), "mean")
-    matrix_max = by_month_year(da.max(dim=["latitude", "longitude"]), "max")
+    if da.chunks:
+        da = da.chunk({"latitude": -1, "longitude": -1})
+    top_pixels = da.quantile(TOP_QUANTILE, dim=["latitude", "longitude"]).drop_vars("quantile")
+    matrix_max = by_month_year(top_pixels, "max")
 
     if len(matrix.columns) == 1:
         year = matrix.columns[0]
@@ -300,7 +304,7 @@ def plot_monthly_matrix(da: xr.DataArray,
         ax.hlines(y, mean, peak, color="#c3c2b7", linewidth=1, zorder=1)
         ax.barh(y, mean, height=0.62, color=ORANGE, zorder=2, label="Regional mean")
         ax.plot(peak, y, "o", markersize=7, markerfacecolor=INK, markeredgecolor="white",
-                markeredgewidth=1.2, linestyle="none", zorder=3, label="Worst pixel")
+                markeredgewidth=1.2, linestyle="none", zorder=3, label="Top 1% of pixels")
 
         if alert_levels:
             # grid lines sit on the alert thresholds, labelled at the top
@@ -327,7 +331,7 @@ def plot_monthly_matrix(da: xr.DataArray,
         fig, axes = plt.subplots(1, 2, figsize=(max(10, 0.5 * len(years) + 6), 5.5),
                                  layout="constrained", sharey=True)
         for ax, mat, subtitle in zip(axes, [matrix, matrix_max],
-                                     ["Regional mean", "Worst pixel"]):
+                                     ["Regional mean", "Top 1% of pixels"]):
             mesh = ax.pcolormesh(np.arange(len(years) + 1), np.arange(13),
                                  mat.reindex(range(1, 13)).values,
                                  cmap=HEAT_CMAP, vmin=0, vmax=vmax,
