@@ -14,7 +14,7 @@ from sklearn.metrics import r2_score
 from reefugia.constants import ZARR_FORMAT
 from reefugia.fetch import get_region
 
-# NOAA CRW 5 km daily product on ERDDAP; the second is a mirror, tried if the first fails
+# NOAA CRW 5 km daily data on ERDDAP (used for validation); the second is a mirror
 CRW_URLS = (
     "https://coastwatch.pfeg.noaa.gov/erddap/griddap/NOAA_DHW",
     "https://upwell.pfeg.noaa.gov/erddap/griddap/dhw_5km",
@@ -22,6 +22,12 @@ CRW_URLS = (
 
 
 # ── Data access ──────────────────────────────────────────────────────────────
+
+# NOAA CRW annual max DHW files (ct5km_dhw-max_v3.1_YYYY.nc, used for trends); the second is a mirror
+CRW_COMPOSITE_URLS = (
+    "https://www.star.nesdis.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/v1.0/annual",
+    "https://coastwatch.noaa.gov/pub/socd/mecb/crw/data/5km/v3.1_op/nc/v1.0/annual",
+)
 
 # servers that refused to connect this session
 _unreachable = set()
@@ -81,8 +87,11 @@ def _download_range(region_name: str, start: str, end: str, variable: str) -> xr
 
 
 def _data_path(name: str) -> str:
+    # NOAA CRW downloads live in data/crw/ (per-year pieces in data/crw/years/)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(repo_root, "data", name)
+    path = os.path.join(repo_root, "data", "crw", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
 
 def _save(da: xr.DataArray, name: str, path: str) -> None:
@@ -96,7 +105,7 @@ def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
     """Cached daily NOAA CRW data for a region and date range (dates as YYYY-MM-DD),
     e.g. CRW_DHW, CRW_SST or CRW_HOTSPOT. Downloads in 3-month pieces."""
     name = variable.lower().removeprefix("crw_")
-    path = _data_path(f"crw_{name}_{region_name}_{start}_{end}.zarr")
+    path = _data_path(f"{name}_{region_name}_{start}_{end}.zarr")
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)[variable]
     da = _download_range(region_name, start, end, variable)
@@ -104,37 +113,67 @@ def load_or_fetch_crw_daily(region_name: str, start: str, end: str,
     return da
 
 
+def _download_composite(year: int, region_name: str, timeout=(30, 900)) -> xr.DataArray:
+    # global yearly file, cut to the region straight away
+    import requests
+    b = get_region(region_name)
+    errors = []
+    for base in CRW_COMPOSITE_URLS:
+        if base in _unreachable:
+            continue
+        url = f"{base}/ct5km_dhw-max_v3.1_{year}.nc"
+        fd, tmp = tempfile.mkstemp(suffix=".nc")
+        os.close(fd)
+        try:
+            with requests.get(url, stream=True, timeout=timeout) as r:
+                r.raise_for_status()
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+            with xr.open_dataset(tmp, engine="h5netcdf") as ds:
+                ds = ds.rename({k: v for k, v in (("lat", "latitude"), ("lon", "longitude"))
+                                if k in ds.variables})
+                da = ds["degree_heating_week"].squeeze(drop=True).sortby("latitude")
+                return da.sel(latitude=slice(b["min_lat"], b["max_lat"]),
+                              longitude=slice(b["min_lon"], b["max_lon"])).load()
+        except requests.exceptions.ConnectTimeout as e:
+            _unreachable.add(base)
+            errors.append(f"{url}: {e}")
+        except requests.exceptions.RequestException as e:
+            errors.append(f"{url}: {e}")
+        finally:
+            os.remove(tmp)
+    raise ConnectionError("Could not download the NOAA CRW annual file:\n" + "\n".join(errors))
+
+
 def load_or_fetch_crw_annual_max(region_name: str, start_year: int = 1986,
                                  end_year: int = 2025) -> xr.DataArray:
-    """Cached annual max NOAA CRW DHW per pixel (dims: year, latitude, longitude).
-    Each year is downloaded and cached on its own, so an interrupted run resumes."""
-    path = _data_path(f"crw_dhw_annual_max_{region_name}_{start_year}_{end_year}.zarr")
+    """Cached annual max NOAA CRW DHW per pixel (dims: year, latitude, longitude), from
+    NOAA's ready-made annual files. Each year is cached on its own, so an interrupted
+    run resumes. Matches the maximum of the daily data (checked in nb03)."""
+    path = _data_path(f"dhw_annual_max_composite_{region_name}_{start_year}_{end_year}.zarr")
     if os.path.exists(path):
         return xr.open_zarr(path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
 
     years = []
     for year in range(start_year, end_year + 1):
-        year_path = _data_path(f"crw_dhw_annual_max_{region_name}_{year}.zarr")
+        year_path = _data_path(f"years/dhw_annual_max_composite_{region_name}_{year}.zarr")
         if os.path.exists(year_path):
             year_max = xr.open_zarr(year_path, zarr_format=ZARR_FORMAT, consolidated=True)["dhw"]
         else:
-            print(f"Downloading NOAA CRW DHW for {year}...")
-            daily = _download_range(region_name, f"{year}-01-01", f"{year}-12-31", "CRW_DHW")
-            year_max = daily.max(dim="time")
+            if years:
+                time.sleep(5)
+            print(f"Downloading NOAA CRW annual max DHW for {year}...")
+            year_max = _download_composite(year, region_name)
             _save(year_max, "dhw", year_path)
         years.append(year_max.expand_dims(year=[year]))
 
-    dhw = xr.concat(years, dim="year").sortby("latitude").compute()
+    dhw = xr.concat(years, dim="year").compute()
     _save(dhw, "dhw", path)
     return dhw
 
 
 # ── Aggregation ──────────────────────────────────────────────────────────────
-
-def annual_max_dhw(dhw: xr.DataArray) -> xr.DataArray:
-    """Annual max DHW per pixel."""
-    return dhw.groupby("time.year").max(dim="time")
-
 
 def area_weighted_mean(da: xr.DataArray) -> xr.DataArray:
     weights = np.cos(np.deg2rad(da.latitude))
