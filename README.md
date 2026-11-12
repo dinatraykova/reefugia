@@ -155,7 +155,7 @@ Red Sea.
 
 With the defaults (C3S SST and NOAA's MMM method) the timing matches closely, with a
 correlation of 0.995 for the regional mean through the year, and the level is close,
-with a mean peak DHW of 11.9 against NOAA's 12.6 °C-weeks (bias −0.7, RMSE 2.8). The
+with a mean peak DHW of 11.8 against NOAA's 12.6 °C-weeks (bias −0.7, RMSE 2.8). The
 spatial correlation of peak DHW is 0.68, because the two SST products differ locally,
 most of all in the southern Red Sea.
 
@@ -171,9 +171,9 @@ baseline matters as much as the method. Every combination tested is below.
 
 | SST | MMM | Spatial r | Mean peak DHW | Mean bias | RMSE |
 |---|---|---|---|---|---|
-| **C3S** | **NOAA method, from C3S (default)** | **0.68** | **11.9** | **−0.7** | **2.8** |
+| **C3S** | **NOAA method, from C3S (default)** | **0.68** | **11.8** | **−0.7** | **2.8** |
 | C3S | warmest 1991–2020 monthly mean | 0.65 | 9.5 | −3.1 | 4.1 |
-| OSTIA | NOAA method, from OSTIA | 0.66 | 21.6 | +9.0 | 9.9 |
+| OSTIA | NOAA method, from OSTIA | 0.67 | 21.5 | +8.9 | 9.8 |
 | C3S | NOAA's own | 0.79 | 16.9 | +4.3 | 5.4 |
 | OSTIA | NOAA's own | 0.82 | 17.2 | +4.6 | 5.5 |
 | NOAA CoralTemp | NOAA's own | 1.000 | 12.6 | 0.0 | 0.003 |
